@@ -1,29 +1,36 @@
 enum Stage: Int, CaseIterable, Identifiable {
-    case proportions, blockIn, features
-    case baseTone, shadows, fourTones, darks, highlights
+    case proportions, blockIn, planes, features
+    case baseTone, shadows, form, values, darks, highlights
     case edges, details
     case check
 
     var id: Int { rawValue }
 
     static let groups: [(name: String, stages: [Stage])] = [
-        ("Shape", [.proportions, .blockIn, .features]),
-        ("Tone", [.baseTone, .shadows, .fourTones, .darks, .highlights]),
+        ("Shape", [.proportions, .blockIn, .planes, .features]),
+        ("Tone", [.baseTone, .shadows, .form, .values, .darks, .highlights]),
         ("Finish", [.edges, .details]),
         ("Check", [.check]),
     ]
 
     var isLines: Bool { [.proportions, .blockIn, .features].contains(self) }
-    var usesTones: Bool { [.baseTone, .shadows, .fourTones, .darks, .highlights, .check].contains(self) }
+    /// Stages that change with the value steps and the shadow amount.
+    var usesValues: Bool { [.baseTone, .values, .darks, .highlights, .check].contains(self) }
+    /// Stages that show where the light comes from.
+    var showsLight: Bool { [.planes, .baseTone, .shadows, .form, .values].contains(self) }
+    /// Stages that show the proportion measurements.
+    var showsMeasurements: Bool { [.proportions, .features].contains(self) }
 
     var title: String {
         switch self {
         case .proportions: "Proportions"
         case .blockIn: "Block-in"
+        case .planes: "Planes"
         case .features: "Features"
         case .baseTone: "Base tone"
         case .shadows: "Shadow shapes"
-        case .fourTones: "Four tones"
+        case .form: "Form"
+        case .values: "Values"
         case .darks: "Darkest accents"
         case .highlights: "Highlights"
         case .edges: "Edges"
@@ -36,10 +43,12 @@ enum Stage: Int, CaseIterable, Identifiable {
         switch self {
         case .proportions: "circle.dashed"
         case .blockIn: "pentagon"
+        case .planes: "cube"
         case .features: "eye"
         case .baseTone: "square.fill.on.square"
         case .shadows: "circle.lefthalf.filled"
-        case .fourTones: "square.stack.3d.down.right"
+        case .form: "light.max"
+        case .values: "square.stack.3d.down.right"
         case .darks: "moon.fill"
         case .highlights: "sun.max"
         case .edges: "scribble"
@@ -51,27 +60,31 @@ enum Stage: Int, CaseIterable, Identifiable {
     var instructions: String {
         switch self {
         case .proportions:
-            "Draw a light circle for the skull. Then draw the jaw down to the chin. The blue lines show the brow, the nose base and the chin. Use the grid to put the size and position of the head right. Press lightly. You will erase these lines later."
+            "Draw a light circle for the skull. Then draw the jaw down to the chin. The blue lines show the brow, the nose base and the chin. Check your drawing against the measurements on the right. Press lightly. You will erase these lines later."
         case .blockIn:
-            "Draw the outline of the head and hair with straight lines only. Do not draw curves or details. Look for the angles where the outline changes direction."
+            "Draw the outline of the head and hair with straight lines only. Do not draw curves or details. Look for the angles where the outline changes direction. Use Measure to check an angle."
+        case .planes:
+            "These are the big planes of this head, shaded by the light in the photo. Each plane has one value. Find where the planes change direction: the forehead, the side of the head, the cheekbone, the side of the nose. The edges between the planes are where the values change."
         case .features:
-            "Put the eyes, brows, nose and mouth on the blue lines. Draw each feature as a simple shape with straight lines. Measure the space between the features against the photo."
+            "Put the eyes, brows, nose and mouth on the blue lines. Draw each feature as a simple shape with straight lines. Measure the spaces between the features in eye widths."
         case .baseTone:
-            "Hatch one light, even tone over all of the head. Do not hatch the white areas. They are the brightest lights. This tone is the start for all the other tones."
+            "Hatch one light, even tone over all of the head. Do not hatch the white areas. They are the highlights. This tone is the start for all the other values."
         case .shadows:
-            "Find the shadow side. All of the gray area is shadow. Hatch all of it with one more layer. Keep the edge between light and shadow clear. Do not shade small parts yet."
-        case .fourTones:
-            "Make the tones darker step by step. Compare each area on your paper with its gray here. Add layers of hatching until the tones are the same. Work on the full head, not on one part at a time."
+            "Separate the light family from the shadow family. Hatch all of the shadow family with one tone. Keep the edge between the families clear. The tan areas are dark local values (hair, a beard, dark clothes) in the light. They are not shadow, so keep them lighter than the shadow family where they turn into the shadow."
+        case .form:
+            "Model the form inside each family. The halftone is where the form turns away from the light. The core shadow is the darkest part of the shadow, next to the light. Reflected light makes the shadow a little lighter away from the core. Cast shadows have sharper edges than form shadows."
+        case .values:
+            "Match each area to its value step. Step 1 is the lightest. Compare an area on your paper with its gray here, and add layers of hatching until they are the same. Work on the full head, not on one part at a time."
         case .darks:
-            "Find the darkest areas: eye sockets, nostrils, the line between the lips, and the hair. Make only these areas very dark."
+            "Find the darkest values: the eye sockets, the nostrils, the line between the lips, and the core of the hair. Make only these areas very dark."
         case .highlights:
-            "The yellow areas are the brightest lights. Lift them with an eraser. Use a hard eraser for small, sharp lights."
+            "The yellow areas are the brightest lights on the skin. Lift them with an eraser. Use a hard eraser for small, sharp lights."
         case .edges:
-            "Dark lines show hard edges. Keep these edges sharp. Light lines show softer edges. In all other areas, blend the tones so that they go softly into each other."
+            "Dark lines show hard edges. Keep these edges sharp. Light lines show softer edges. In all other areas, blend the values so that they go softly into each other."
         case .details:
-            "Now look at the photo. Add small details last: the pupils, the corners of the mouth, single hairs. Use Squint to check the big tones. Use Flip to find mistakes in proportion."
+            "Now look at the photo. Add small details last: the pupils, the corners of the mouth, single hairs. Use Squint to check the big values. Use Flip to find mistakes in proportion."
         case .check:
-            "Take a photo of your drawing and add it here. The app aligns it to the reference. Lines shows the shapes on your drawing. Tones shows where your drawing is too dark (red) or too light (blue)."
+            "Take a photo of your drawing and add it here. The app aligns it to the reference and lists what to correct, from the largest error to the smallest."
         }
     }
 }

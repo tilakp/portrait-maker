@@ -1,9 +1,100 @@
 import CoreGraphics
+import CoreImage
 import Foundation
+import Vision
+
+/// Paper sizes in millimeters, short side first.
+enum PaperSize: String, CaseIterable, Identifiable {
+    case a4 = "A4", a3 = "A3", letter = "Letter", nineByTwelve = "9 × 12 in", elevenByFourteen = "11 × 14 in"
+    case unknown = "Other size"
+
+    var id: String { rawValue }
+
+    var millimeters: (short: Double, long: Double)? {
+        switch self {
+        case .a4: (210, 297)
+        case .a3: (297, 420)
+        case .letter: (215.9, 279.4)
+        case .nineByTwelve: (228.6, 304.8)
+        case .elevenByFourteen: (279.4, 355.6)
+        case .unknown: nil
+        }
+    }
+}
+
+/// The photo of the drawing after the paper is made flat.
+struct Paper {
+    let image: CGImage
+    /// Millimeters for each pixel of `image`. Nil when the paper or its size is not known.
+    let millimetersPerPixel: Double?
+    let found: Bool
+
+    /// Finds the paper with Vision and removes the perspective, so that the paper is a rectangle.
+    /// With a known paper size, the rectangle gets the paper's proportions and a scale in millimeters.
+    static func flatten(_ photo: CGImage, size: PaperSize) -> Paper {
+        let request = VNDetectDocumentSegmentationRequest()
+        try? VNImageRequestHandler(cgImage: photo).perform([request])
+        let w = CGFloat(photo.width), h = CGFloat(photo.height)
+        guard let page = request.results?.first, page.confidence > 0.5,
+              page.boundingBox.width * page.boundingBox.height > 0.2
+        else { return Paper(image: whitened(photo, paperFound: false), millimetersPerPixel: nil, found: false) }
+
+        func point(_ p: CGPoint) -> CIVector { CIVector(x: p.x * w, y: p.y * h) }
+        let filter = CIFilter(name: "CIPerspectiveCorrection")!
+        filter.setValue(CIImage(cgImage: photo), forKey: kCIInputImageKey)
+        filter.setValue(point(page.topLeft), forKey: "inputTopLeft")
+        filter.setValue(point(page.topRight), forKey: "inputTopRight")
+        filter.setValue(point(page.bottomLeft), forKey: "inputBottomLeft")
+        filter.setValue(point(page.bottomRight), forKey: "inputBottomRight")
+        let context = CIContext()
+        guard let output = filter.outputImage,
+              let flat = context.createCGImage(output, from: output.extent)
+        else { return Paper(image: whitened(photo, paperFound: false), millimetersPerPixel: nil, found: false) }
+
+        guard let mm = size.millimeters else { return Paper(image: whitened(flat, paperFound: true), millimetersPerPixel: nil, found: true) }
+        // The corrected photo has the proportions of the photo, not of the paper. Give it the paper's.
+        let landscape = flat.width > flat.height
+        let long = max(flat.width, flat.height)
+        let short = Int((Double(long) * mm.short / mm.long).rounded())
+        let (tw, th) = landscape ? (long, short) : (short, long)
+        let ctx = CGContext(
+            data: nil, width: tw, height: th, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        )!
+        ctx.interpolationQuality = .high
+        ctx.draw(flat, in: CGRect(x: 0, y: 0, width: tw, height: th))
+        let white = whitened(ctx.makeImage()!, paperFound: true)
+        // Whitening can make the image smaller, so take the scale from the final image.
+        return Paper(image: white, millimetersPerPixel: mm.long / Double(max(white.width, white.height)), found: true)
+    }
+
+    /// Makes the paper white, so that uneven light on the paper does not change the values.
+    /// When the paper was found, its light comes from a band along the edges of the paper, where
+    /// people rarely draw. A drawing with a dark background then does not count as paper.
+    /// Without the paper, one value (the bright end of the photo) is used for all of it.
+    static func whitened(_ image: CGImage, paperFound: Bool) -> CGImage {
+        let gray = LessonBuilder.grayscale(LessonBuilder.scaled(image, maxSide: 2000))
+        let w = gray.width, h = gray.height, raw = gray.pixels
+        let band = 0.06
+        var light: [Float]
+        if paperFound {
+            let samples = stride(from: 0, to: w * h, by: 5).filter { i in
+                let x = Double(i % w) / Double(w), y = Double(i / w) / Double(h)
+                return x < band || x > 1 - band || y < band || y > 1 - band
+            }
+            light = DrawingCheck.paperLight(raw, w, h, samples: samples)
+        } else {
+            let sorted = raw.sorted()
+            light = [Float](repeating: sorted[Int(Float(sorted.count - 1) * 0.97)], count: raw.count)
+        }
+        let flat = raw.indices.map { min(raw[$0] / max(light[$0], 0.05), 1) }
+        return LessonBuilder.rgbaImage(w, h) { (flat[$0], flat[$0], flat[$0]) }
+    }
+}
 
 /// A photo of the user's drawing, aligned to the reference by the two eyes.
 struct DrawingCheck {
-    /// The photo as loaded, for aligning by hand.
+    /// The flat photo of the paper, for aligning by hand.
     let original: CGImage
     /// The aligned drawing at the size of the reference.
     let aligned: CGImage
@@ -11,9 +102,12 @@ struct DrawingCheck {
     let pixels: [Float]
     /// `pixels` with the same blur as the four-tone map.
     let tones: [Float]
+    /// Millimeters on the paper for each pixel of the reference. Nil when the paper size is not known.
+    let millimetersPerPixel: Double?
 
     /// Finds the eyes in the drawing with Vision. Returns nil when no face is found.
-    static func autoAlign(_ drawing: CGImage, to analysis: Analysis) -> DrawingCheck? {
+    static func autoAlign(_ paper: Paper, to analysis: Analysis) -> DrawingCheck? {
+        let drawing = paper.image
         let small = LessonBuilder.scaled(drawing, maxSide: 1600)
         guard let face = LessonBuilder.faceLandmarks(small),
               let g = LessonBuilder.FaceGeometry(face, size: CGSize(width: small.width, height: small.height))
@@ -23,12 +117,13 @@ struct DrawingCheck {
         var a = CGPoint(x: g.leftEye.x * scale, y: (h - g.leftEye.y) * scale)
         var b = CGPoint(x: g.rightEye.x * scale, y: (h - g.rightEye.y) * scale)
         if a.x > b.x { swap(&a, &b) }
-        return align(drawing, eyes: (a, b), to: analysis)
+        return align(paper, eyes: (a, b), to: analysis)
     }
 
     /// `eyes` are in pixels of the drawing, top-left origin, the left one in the image first.
-    static func align(_ drawing: CGImage, eyes: (CGPoint, CGPoint), to analysis: Analysis) -> DrawingCheck? {
+    static func align(_ paper: Paper, eyes: (CGPoint, CGPoint), to analysis: Analysis) -> DrawingCheck? {
         guard let target = analysis.eyes else { return nil }
+        let drawing = paper.image
 
         // Similarity transform (scale, rotation, move) that puts the drawing's eyes on the reference's eyes.
         let from = CGPoint(x: eyes.1.x - eyes.0.x, y: eyes.1.y - eyes.0.y)
@@ -46,7 +141,12 @@ struct DrawingCheck {
         let transform = refine(start, tones: first.tones, analysis)
         let (pixels, tones) = transform == start ? first : render(drawing, transform, analysis)
         let aligned = LessonBuilder.rgbaImage(analysis.width, analysis.height) { i in (pixels[i], pixels[i], pixels[i]) }
-        return DrawingCheck(original: drawing, aligned: aligned, pixels: pixels, tones: tones)
+        // The transform scales the drawing to the reference, so one reference pixel is 1 / scale drawing pixels.
+        let scaleToReference = Double(sqrt(abs(transform.a * transform.d - transform.b * transform.c)))
+        return DrawingCheck(
+            original: drawing, aligned: aligned, pixels: pixels, tones: tones,
+            millimetersPerPixel: paper.millimetersPerPixel.map { $0 / scaleToReference }
+        )
     }
 
     /// Draws the photo of the drawing at the size of the reference and makes the paper white.
@@ -76,15 +176,14 @@ struct DrawingCheck {
             ctx.fill(rect)
         }
 
-        // Make the paper white, so that uneven light on the paper does not change the result.
-        // The paper is the area of the photo outside the person in the reference.
-        let paperSamples = stride(from: 0, to: w * h, by: 7).filter { covered[$0] > 0.99 && !analysis.mask[$0] }
-        let paper = paperLight(raw, w, h, samples: paperSamples)
-        let flat = raw.indices.map { min(raw[$0] / max(paper[$0], 0.05), 1) }
-        // Then make the darkest pencil in the head the darkest tone of the map.
+        // The paper is already white (Paper.whitened). Outside the photo, use white paper.
+        let flat = raw.indices.map { covered[$0] > 0.5 ? raw[$0] : 1 }
         let head = flat.indices.filter { analysis.mask[$0] }.map { flat[$0] }.sorted()
         let dark = head.isEmpty ? 0 : head[Int(Float(head.count - 1) * 0.01)]
-        let darkest = LessonBuilder.levelTones[0]
+        // Pencil cannot be as dark as a photo, so artists compress the range of values. Compare the
+        // drawing in its own range: its darkest pencil in the head is the darkest tone of the photo.
+        let photoHead = analysis.medium.indices.filter { analysis.mask[$0] }.map { analysis.medium[$0] }.sorted()
+        let darkest = photoHead.isEmpty ? 0.1 : photoHead[Int(Float(photoHead.count - 1) * 0.01)]
         let pixels = flat.map { min(max(darkest + ($0 - dark) / max(1 - dark, 0.05) * (1 - darkest), 0), 1) }
         return (pixels, LessonBuilder.boxBlur(pixels, w, h, radius: max(1, w / 150)))
     }
@@ -162,15 +261,19 @@ struct DrawingCheck {
             .concatenating(CGAffineTransform(translationX: CGFloat(cx + best.dx), y: CGFloat(cy + best.dy)))
     }
 
-    /// Red where the drawing is darker than the four-tone map, blue where it is lighter.
-    /// Also returns the part of the head where the tones are the same, from 0 to 1.
+    /// The value step of each pixel of the drawing, with the same thresholds as the photo.
+    func steps(_ maps: ToneMaps) -> [Int] {
+        tones.map { maps.step(of: $0) }
+    }
+
+    /// Red where the drawing is darker than the value map, blue where it is lighter.
+    /// Also returns the part of the head where the values are the same, from 0 to 1.
     func difference(to lesson: Lesson) -> (image: CGImage, match: Double) {
         let a = lesson.analysis
-        let tones = LessonBuilder.levelTones
-        let midpoints = (0..<3).map { (tones[$0] + tones[$0 + 1]) / 2 }
-        let steps = self.tones.indices.map { i -> Float in
-            guard a.mask[i] else { return 0 }
-            return Float(midpoints.filter { self.tones[i] >= $0 }.count - lesson.tones.levels[i])
+        let drawn = steps(lesson.tones)
+        // Positive where the drawing is darker: a larger step is darker.
+        let steps = drawn.indices.map { i -> Float in
+            a.mask[i] ? Float(drawn[i] - lesson.tones.steps[i]) : 0
         }
         // Smooth the difference, so that a small error in alignment at the edge
         // between two tones does not show as a wrong area.
@@ -183,7 +286,7 @@ struct DrawingCheck {
             total += 1
             if abs(d) < 0.5 { same += 1; return (v, v, v) }
             let alpha = min(abs(d), 2) * 0.35
-            let color: (Float, Float, Float) = d < 0 ? (0.95, 0.25, 0.2) : (0.2, 0.45, 1)
+            let color: (Float, Float, Float) = d > 0 ? (0.95, 0.25, 0.2) : (0.2, 0.45, 1)
             return (v + (color.0 - v) * alpha, v + (color.1 - v) * alpha, v + (color.2 - v) * alpha)
         }
         return (image, total > 0 ? Double(same) / Double(total) : 0)
@@ -198,25 +301,7 @@ struct DrawingCheck {
         }
         func fit(_ indices: [Int]) -> [Double]? {
             guard indices.count >= 200 else { return nil }
-            var a = [[Double]](repeating: [Double](repeating: 0, count: 7), count: 6)
-            for i in indices {
-                let t = terms(i), v = Double(raw[i])
-                for r in 0..<6 {
-                    for c in 0..<6 { a[r][c] += t[r] * t[c] }
-                    a[r][6] += t[r] * v
-                }
-            }
-            // Gaussian elimination with partial pivoting.
-            for col in 0..<6 {
-                let pivot = (col..<6).max(by: { abs(a[$0][col]) < abs(a[$1][col]) })!
-                a.swapAt(col, pivot)
-                guard abs(a[col][col]) > 1e-12 else { return nil }
-                for r in 0..<6 where r != col {
-                    let f = a[r][col] / a[col][col]
-                    for c in col...6 { a[r][c] -= f * a[col][c] }
-                }
-            }
-            return (0..<6).map { a[$0][6] / a[$0][$0] }
+            return LinearAlgebra.leastSquares(indices.map(terms), indices.map { Double(raw[$0]) })
         }
         func value(_ c: [Double], _ i: Int) -> Float { Float(zip(c, terms(i)).map { $0 * $1 }.reduce(0, +)) }
 

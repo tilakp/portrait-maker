@@ -1,100 +1,31 @@
 import AppKit
-import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
-
-@main
-enum Entry {
-    static func main() {
-        let args = CommandLine.arguments
-        // Debug mode: PortraitMaker --render <image> <output folder> [<photo of drawing>]
-        if args.count >= 4, args[1] == "--render" {
-            exit(render(
-                input: URL(fileURLWithPath: args[2]), output: URL(fileURLWithPath: args[3]),
-                drawing: args.count > 4 ? URL(fileURLWithPath: args[4]) : nil
-            ))
-        }
-        PortraitMakerApp.main()
-    }
-
-    static func render(input: URL, output: URL, drawing: URL?) -> Int32 {
-        guard let image = LessonBuilder.loadImage(at: input) else {
-            print("Cannot read \(input.path)")
-            return 1
-        }
-        let lesson = LessonBuilder.build(from: image)
-        print("Face found: \(lesson.faceFound), size \(lesson.gray.width)x\(lesson.gray.height)")
-        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        func write(_ picture: CGImage, _ name: String) {
-            let url = output.appendingPathComponent("\(name).png")
-            let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
-            CGImageDestinationAddImage(destination, picture, nil)
-            CGImageDestinationFinalize(destination)
-            print(url.path)
-        }
-        for stage in Stage.allCases where stage != .check {
-            let underlay = stage.isLines ? lesson.photo : nil
-            write(flatten(lesson.layers(for: stage), over: underlay), String(format: "%02d-%@", stage.rawValue + 1, stage.title))
-        }
-        if let drawing {
-            guard let photo = LessonBuilder.loadImage(at: drawing) else {
-                print("Cannot read \(drawing.path)")
-                return 1
-            }
-            guard let check = DrawingCheck.autoAlign(photo, to: lesson.analysis) else {
-                print("No face found in the drawing")
-                return 1
-            }
-            let difference = check.difference(to: lesson)
-            print("Tones match: \(Int(difference.match * 100))%")
-            write(flatten([Layer(image: check.aligned)] + lesson.lines[.features]!, over: nil), "check-lines")
-            write(difference.image, "check-tones")
-        }
-        return 0
-    }
-
-    /// The layers on white paper, with a faint photo below them.
-    static func flatten(_ layers: [Layer], over photo: CGImage?) -> CGImage {
-        let first = layers[0].image
-        let rect = CGRect(x: 0, y: 0, width: first.width, height: first.height)
-        let ctx = CGContext(
-            data: nil, width: first.width, height: first.height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        ctx.setFillColor(gray: 1, alpha: 1)
-        ctx.fill(rect)
-        if let photo {
-            ctx.setAlpha(0.2)
-            ctx.draw(photo, in: rect)
-        }
-        for layer in layers {
-            ctx.setAlpha(layer.opacity)
-            ctx.draw(layer.image, in: rect)
-        }
-        return ctx.makeImage()!
-    }
-}
-
-struct PortraitMakerApp: App {
-    var body: some Scene {
-        WindowGroup("Portrait Maker") {
-            ContentView()
-                .frame(minWidth: 900, minHeight: 650)
-        }
-    }
-}
 
 struct Probe: Identifiable {
     let id = UUID()
     /// Pixel position in the lesson image, top-left origin.
     let point: CGPoint
     let value: Float
+    /// The value step at the point, 0 is the lightest.
+    let step: Int
 }
 
 enum ImportTarget { case portrait, drawing }
 
 enum CheckMode: String, CaseIterable {
-    case lines = "Lines", tones = "Tones", drawing = "Drawing"
+    case lines = "Lines", tones = "Values", drawing = "Drawing"
+}
+
+/// The tool that a click on a picture uses.
+enum Tool { case none, compare, measure }
+
+/// Lines and boxes drawn on a picture, in pixels of the picture, top-left origin.
+struct Overlay {
+    var segments: [(CGPoint, CGPoint)] = []
+    var rect: CGRect?
+    var arrow: (from: CGPoint, to: CGPoint)?
+    var color: Color = .orange
 }
 
 struct ContentView: View {
@@ -104,16 +35,24 @@ struct ContentView: View {
     @State private var squint = false
     @State private var flip = false
     @State private var underlay = true
-    @State private var compare = false
+    @State private var tool = Tool.none
     @State private var grid = 0
     @State private var balance = 0.0
+    @State private var valueCount = 5
     @State private var probes: [Probe] = []
+    @State private var measurePoints: [CGPoint] = []
+    @State private var selectedMeasurement: UUID?
     @State private var importTarget: ImportTarget?
+    @AppStorage("paperSize") private var paperSize = PaperSize.a4
+    /// The photo of the drawing as loaded, so that a new paper size can flatten it again.
+    @State private var drawingPhoto: CGImage?
     @State private var check: DrawingCheck?
     @State private var difference: (image: CGImage, match: Double)?
+    @State private var suggestions: [Suggestion] = []
+    @State private var selectedSuggestion: UUID?
     @State private var checkMode = CheckMode.lines
-    /// A drawing that waits for the user to click its eyes.
-    @State private var unaligned: CGImage?
+    /// A flat photo of the paper that waits for the user to click the eyes.
+    @State private var unaligned: Paper?
     @State private var eyeClicks: [CGPoint] = []
 
     var body: some View {
@@ -132,7 +71,7 @@ struct ContentView: View {
             .disabled(lesson == nil)
         } detail: {
             if loading {
-                ProgressView("Preparing the stages…")
+                ProgressView("Analyzing the portrait…")
             } else if let lesson, let stage {
                 detail(lesson, stage)
             } else {
@@ -159,13 +98,22 @@ struct ContentView: View {
                 }
                 Toggle(isOn: $squint) { Label("Squint", systemImage: "eye.slash") }
                 Toggle(isOn: $flip) { Label("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") }
-                Toggle(isOn: $compare) { Label("Compare tones", systemImage: "eyedropper") }
+                Toggle(isOn: toolBinding(.compare)) { Label("Compare values", systemImage: "eyedropper") }
+                Toggle(isOn: toolBinding(.measure)) { Label("Measure", systemImage: "ruler") }
                 Toggle(isOn: $underlay) { Label("Photo under lines", systemImage: "photo") }
                     .disabled(stage?.isLines != true)
             }
         }
-        .onChange(of: compare) { probes = [] }
+        .onChange(of: tool) {
+            probes = []
+            measurePoints = []
+        }
+        .onChange(of: stage) {
+            selectedMeasurement = nil
+            selectedSuggestion = nil
+        }
         .onAppear {
+            Task.detached(priority: .utility) { FormAnalyzer.warmUp() }
             // Paths at launch open a portrait and a drawing: open -a PortraitMaker --args <portrait> [<drawing>]
             let paths = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }.map { URL(fileURLWithPath: $0) }
             if let portrait = paths.first {
@@ -186,78 +134,101 @@ struct ContentView: View {
         }
     }
 
+    private func toolBinding(_ value: Tool) -> Binding<Bool> {
+        Binding(get: { tool == value }, set: { tool = $0 ? value : .none })
+    }
+
     // MARK: - Detail
 
     private func detail(_ lesson: Lesson, _ stage: Stage) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Step \(stage.rawValue + 1) of \(Stage.allCases.count): \(stage.title)")
                 .font(.title2.bold())
             Text(stage.instructions)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(5)
             if !lesson.faceFound && (stage == .proportions || stage == .features || stage == .check) {
                 Text("No face was found in the portrait, so this step is limited.")
                     .foregroundStyle(.orange)
             }
-            if stage.usesTones && (stage != .check || checkMode == .tones) {
-                HStack {
-                    Text("Shadow amount")
-                    Slider(
-                        value: $balance, in: -1...1,
-                        label: { EmptyView() },
-                        minimumValueLabel: { Text("Less") },
-                        maximumValueLabel: { Text("More") },
-                        onEditingChanged: { editing in if !editing { updateTones() } }
-                    )
-                    .frame(maxWidth: 320)
-                    Button("Reset") { balance = 0; updateTones() }
-                        .disabled(balance == 0)
-                }
+            if lesson.form == nil && [.planes, .shadows, .form].contains(stage) {
+                Text("The depth model is not available, so this step uses the photo only.")
+                    .foregroundStyle(.orange)
+            }
+            if stage.showsLight, let form = lesson.form {
+                Label(form.form.lightDescription, systemImage: "lightbulb")
+                    .foregroundStyle(.secondary)
+            }
+            if stage.usesValues && (stage != .check || checkMode == .tones) {
+                valueControls
             }
             if stage == .check { checkControls(lesson) }
-            HStack(spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
                 mainPicture(lesson, stage)
-                picture([Layer(image: lesson.photo)], pixelWidth: lesson.gray.width, markers: probeMarkers, onTap: probe)
-                    .frame(maxWidth: 260)
-                    .opacity(stage == .details ? 0 : 1)
+                sidePanel(lesson, stage)
+                    .frame(width: 300)
             }
             footer(stage)
         }
         .padding(20)
     }
 
+    private var valueControls: some View {
+        HStack {
+            Stepper(value: $valueCount, in: 2...9) {
+                Text("Value steps: \(valueCount)").monospacedDigit()
+            }
+            .onChange(of: valueCount) { updateTones() }
+            Divider().frame(height: 16)
+            Text("Shadow amount")
+            Slider(
+                value: $balance, in: -1...1,
+                label: { EmptyView() },
+                minimumValueLabel: { Text("Less") },
+                maximumValueLabel: { Text("More") },
+                onEditingChanged: { editing in if !editing { updateTones() } }
+            )
+            .frame(maxWidth: 280)
+            Button("Reset") { balance = 0; updateTones() }
+                .disabled(balance == 0)
+        }
+    }
+
     @ViewBuilder private func mainPicture(_ lesson: Lesson, _ stage: Stage) -> some View {
         if stage != .check {
             picture(
                 lesson.layers(for: stage), pixelWidth: lesson.gray.width,
-                underlay: stage.isLines && underlay ? lesson.photo : nil, markers: probeMarkers, onTap: probe
+                underlay: stage.isLines && underlay ? lesson.photo : nil,
+                markers: markers, overlays: overlays(lesson), onTap: click
             )
         } else if let unaligned {
             let names = ["1", "2"]
             picture(
-                [Layer(image: unaligned)], pixelWidth: unaligned.width,
+                [Layer(image: unaligned.image)], pixelWidth: unaligned.image.width,
                 markers: eyeClicks.enumerated().map { (names[$0.offset], $0.element) },
-                onTap: { clickEye($0, in: unaligned) }
+                overlays: [], onTap: { clickEye($0, in: unaligned) }
             )
         } else if let check {
             switch checkMode {
             case .lines:
                 picture(
                     [Layer(image: check.aligned)] + lesson.lines[.features]!.map { Layer(image: $0.image, opacity: $0.opacity, tinted: true) },
-                    pixelWidth: lesson.gray.width, markers: probeMarkers, onTap: probe
+                    pixelWidth: lesson.gray.width, markers: markers, overlays: overlays(lesson), onTap: click
                 )
             case .tones:
                 if let difference {
-                    picture([Layer(image: difference.image)], pixelWidth: lesson.gray.width, markers: probeMarkers, onTap: probe)
+                    picture([Layer(image: difference.image)], pixelWidth: lesson.gray.width, markers: markers, overlays: overlays(lesson), onTap: click)
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             case .drawing:
-                picture([Layer(image: check.aligned)], pixelWidth: lesson.gray.width, markers: probeMarkers, onTap: probe)
+                picture([Layer(image: check.aligned)], pixelWidth: lesson.gray.width, markers: markers, overlays: overlays(lesson), onTap: click)
             }
         } else {
             ContentUnavailableView {
                 Label("Add your drawing", systemImage: "camera")
             } description: {
-                Text("Take a photo of your paper from straight above, in even light. Drop it here, or click the button.")
+                Text("Take a photo of all of your paper from straight above, in even light, on a darker table. Drop it here, or click the button.")
             } actions: {
                 Button("Add Photo of Drawing…") { importTarget = .drawing }
                     .disabled(lesson.analysis.eyes == nil)
@@ -288,13 +259,18 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 280)
+                .frame(maxWidth: 260)
                 if checkMode == .tones, let difference {
-                    Text("Tones are the same on \(Int((difference.match * 100).rounded()))% of the head.")
+                    Text("Values are the same on \(Int((difference.match * 100).rounded()))% of the head.")
                 }
                 Spacer()
+                Picker("Paper", selection: $paperSize) {
+                    ForEach(PaperSize.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .frame(width: 170)
+                .onChange(of: paperSize) { if let drawingPhoto { processDrawing(drawingPhoto) } }
                 Button("Align by Hand") {
-                    unaligned = check?.original
+                    unaligned = drawingPhoto.map { Paper.flatten($0, size: paperSize) }
                     eyeClicks = []
                 }
                 Button("New Photo…") { importTarget = .drawing }
@@ -302,23 +278,115 @@ struct ContentView: View {
         }
     }
 
-    private var probeMarkers: [(String, CGPoint)] {
-        guard compare else { return [] }
-        return probes.enumerated().map { ($0.offset == 0 ? "A" : "B", $0.element.point) }
+    // MARK: - Side panel
+
+    @ViewBuilder private func sidePanel(_ lesson: Lesson, _ stage: Stage) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if stage != .details {
+                picture([Layer(image: lesson.photo)], pixelWidth: lesson.gray.width, markers: markers, overlays: overlays(lesson), onTap: click)
+                    .frame(height: stage.showsMeasurements || (stage == .check && check != nil) ? 260 : nil)
+            }
+            if stage.showsMeasurements && !lesson.measurements.isEmpty {
+                Text("Measurements").font(.headline)
+                List(lesson.measurements, selection: $selectedMeasurement) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(m.title).bold()
+                            Spacer()
+                            Text(m.value).monospacedDigit()
+                        }
+                        Text(m.typical).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .tag(m.id)
+                }
+                .listStyle(.bordered)
+            }
+            if stage == .check && check != nil {
+                suggestionList
+            }
+        }
+    }
+
+    @ViewBuilder private var suggestionList: some View {
+        HStack {
+            Text("What to correct").font(.headline)
+            Spacer()
+            Text("\(suggestions.count)").foregroundStyle(.secondary)
+        }
+        if check?.millimetersPerPixel == nil {
+            Text("For distances in millimeters, choose the paper size and include all of the paper in the photo.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        if suggestions.isEmpty && difference != nil {
+            Text("No large errors found. Compare the details by eye now.")
+                .foregroundStyle(.secondary)
+        }
+        List(suggestions, selection: $selectedSuggestion) { s in
+            HStack(alignment: .top) {
+                Image(systemName: s.kind == .shape ? "ruler" : s.kind == .value ? "circle.lefthalf.filled" : "questionmark.circle")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.area).bold()
+                    Text(s.message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .tag(s.id)
+        }
+        .listStyle(.bordered)
+        Text("Left and right are as you see them in the picture.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+
+    private func overlays(_ lesson: Lesson) -> [Overlay] {
+        var result: [Overlay] = []
+        if let m = lesson.measurements.first(where: { $0.id == selectedMeasurement }) {
+            result.append(Overlay(segments: m.segments, color: .orange))
+        }
+        if let s = suggestions.first(where: { $0.id == selectedSuggestion }) {
+            result.append(Overlay(rect: s.rect, arrow: s.move, color: .cyan))
+        }
+        if tool == .measure && measurePoints.count == 2 {
+            result.append(Overlay(segments: [(measurePoints[0], measurePoints[1])], color: .green))
+        }
+        return result
+    }
+
+    private var markers: [(String, CGPoint)] {
+        switch tool {
+        case .compare: return probes.enumerated().map { ($0.offset == 0 ? "A" : "B", $0.element.point) }
+        case .measure: return measurePoints.enumerated().map { ("\($0.offset + 1)", $0.element) }
+        case .none: return []
+        }
     }
 
     @ViewBuilder private func footer(_ stage: Stage) -> some View {
         HStack(spacing: 16) {
-            if compare {
+            if tool == .compare {
                 if probes.isEmpty {
-                    Text("Click two points on a picture to compare their tones.")
+                    Text("Click two points on a picture to compare their values.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(Array(probes.enumerated()), id: \.element.id) { index, probe in
-                    swatch(index == 0 ? "A" : "B", probe.value)
+                    swatch(index == 0 ? "A" : "B", probe)
                 }
                 if probes.count == 2 {
-                    Text(verdict(probes[0].value, probes[1].value))
+                    Text(verdict(probes[0], probes[1]))
+                }
+            } else if tool == .measure, let lesson {
+                if measurePoints.count < 2 {
+                    Text("Click two points on a picture to measure a length and an angle.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(Measurements.describe(measurePoints[0], measurePoints[1], eyeWidth: lesson.eyeWidth, headHeight: lesson.headHeight))
+                }
+            } else if let lesson, !lesson.legend(for: stage).isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(Array(lesson.legend(for: stage).enumerated()), id: \.offset) { _, item in
+                            legend(Color(red: Double(item.color.0), green: Double(item.color.1), blue: Double(item.color.2)), item.name)
+                        }
+                    }
                 }
             } else if stage == .check && checkMode == .tones && check != nil {
                 legend(Color(red: 0.95, green: 0.25, blue: 0.2), "Too dark")
@@ -336,7 +404,8 @@ struct ContentView: View {
 
     private func legend(_ color: Color, _ text: String) -> some View {
         HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.7)).frame(width: 18, height: 18)
+            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 18, height: 18)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(.secondary.opacity(0.5)))
             Text(text)
         }
     }
@@ -346,7 +415,7 @@ struct ContentView: View {
     /// Layers drawn on white paper, scaled to fit. Taps are reported in pixels of the layers, top-left origin.
     private func picture(
         _ layers: [Layer], pixelWidth: Int, underlay: CGImage? = nil,
-        markers: [(String, CGPoint)], onTap: @escaping (CGPoint) -> Void
+        markers: [(String, CGPoint)], overlays: [Overlay], onTap: @escaping (CGPoint) -> Void
     ) -> some View {
         let first = layers[0].image
         return GeometryReader { geo in
@@ -365,6 +434,7 @@ struct ContentView: View {
                 .frame(width: fit.width, height: fit.height)
                 .blur(radius: squint ? 6 : 0)
                 .overlay { gridLines(size: fit.size) }
+                .overlay { overlayCanvas(overlays, scale: scale) }
                 .scaleEffect(x: flip ? -1 : 1)
                 .offset(x: fit.minX, y: fit.minY)
                 .shadow(radius: 2)
@@ -388,6 +458,35 @@ struct ContentView: View {
                 onTap(CGPoint(x: x, y: (location.y - fit.minY) / scale))
             }
         }
+    }
+
+    private func overlayCanvas(_ overlays: [Overlay], scale: CGFloat) -> some View {
+        Canvas { context, _ in
+            func p(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x * scale, y: point.y * scale) }
+            for overlay in overlays {
+                var path = Path()
+                for (a, b) in overlay.segments {
+                    path.move(to: p(a))
+                    path.addLine(to: p(b))
+                }
+                if let rect = overlay.rect {
+                    path.addRect(CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale))
+                }
+                if let arrow = overlay.arrow {
+                    let a = p(arrow.from), b = p(arrow.to)
+                    path.move(to: a)
+                    path.addLine(to: b)
+                    let angle = atan2(b.y - a.y, b.x - a.x)
+                    for side in [-0.5, 0.5] {
+                        path.move(to: b)
+                        path.addLine(to: CGPoint(x: b.x - 9 * cos(angle + side), y: b.y - 9 * sin(angle + side)))
+                    }
+                }
+                context.stroke(path, with: .color(.black.opacity(0.5)), lineWidth: 4)
+                context.stroke(path, with: .color(overlay.color), lineWidth: 2)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder private func layerImage(_ layer: Layer) -> some View {
@@ -427,31 +526,44 @@ struct ContentView: View {
         return CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
     }
 
-    // MARK: - Tone compare
+    // MARK: - Tools
 
-    private func probe(_ point: CGPoint) {
-        guard compare, let lesson else { return }
-        let probe = Probe(point: point, value: lesson.gray.value(x: Int(point.x), y: Int(point.y)))
-        probes = probes.count >= 2 ? [probe] : probes + [probe]
+    private func click(_ point: CGPoint) {
+        guard let lesson else { return }
+        switch tool {
+        case .compare:
+            let x = min(max(Int(point.x), 0), lesson.gray.width - 1), y = min(max(Int(point.y), 0), lesson.gray.height - 1)
+            let probe = Probe(
+                point: point, value: lesson.gray.value(x: x, y: y),
+                step: lesson.tones.step(of: lesson.analysis.medium[y * lesson.gray.width + x])
+            )
+            probes = probes.count >= 2 ? [probe] : probes + [probe]
+        case .measure:
+            measurePoints = measurePoints.count >= 2 ? [point] : measurePoints + [point]
+        case .none:
+            break
+        }
     }
 
-    /// Each tone is shown on the same neutral gray, so its neighbors cannot trick the eye.
-    private func swatch(_ name: String, _ value: Float) -> some View {
+    /// Each value is shown on the same neutral gray, so its neighbors cannot trick the eye.
+    private func swatch(_ name: String, _ probe: Probe) -> some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(Color(white: Double(value)))
+                .fill(Color(white: Double(probe.value)))
                 .frame(width: 32, height: 32)
                 .padding(8)
                 .background(Color(white: 0.5))
-            Text("\(name): \(Int(((1 - value) * 100).rounded()))% dark")
+            Text("\(name): step \(probe.step + 1) of \(lesson?.tones.count ?? 0), \(Int(((1 - probe.value) * 100).rounded()))% dark")
                 .monospacedDigit()
         }
     }
 
-    private func verdict(_ a: Float, _ b: Float) -> String {
-        let difference = Int(((a - b) * 100).rounded())
-        if abs(difference) <= 3 { return "Almost the same tone." }
-        return difference > 0 ? "B is \(difference)% darker." : "A is \(-difference)% darker."
+    private func verdict(_ a: Probe, _ b: Probe) -> String {
+        let difference = Int(((a.value - b.value) * 100).rounded())
+        if abs(difference) <= 3 { return "Almost the same value." }
+        let steps = abs(a.step - b.step)
+        let stepText = steps == 0 ? "the same step" : steps == 1 ? "1 step" : "\(steps) steps"
+        return difference > 0 ? "B is \(difference)% darker (\(stepText))." : "A is \(-difference)% darker (\(stepText))."
     }
 
     // MARK: - Loading
@@ -460,12 +572,16 @@ struct ContentView: View {
         guard let image = load(url) else { return }
         loading = true
         probes = []
+        measurePoints = []
         check = nil
+        drawingPhoto = nil
         difference = nil
+        suggestions = []
         unaligned = nil
         balance = 0
+        let count = valueCount
         Task.detached {
-            let built = LessonBuilder.build(from: image)
+            let built = LessonBuilder.build(from: image, valueCount: count)
             await MainActor.run {
                 lesson = built
                 stage = .proportions
@@ -476,28 +592,36 @@ struct ContentView: View {
     }
 
     private func openDrawing(_ url: URL) {
-        guard let image = load(url), let analysis = lesson?.analysis else { return }
+        guard let image = load(url) else { return }
+        drawingPhoto = image
+        processDrawing(image)
+    }
+
+    private func processDrawing(_ photo: CGImage) {
+        guard let analysis = lesson?.analysis else { return }
+        let size = paperSize
         Task.detached {
-            let aligned = DrawingCheck.autoAlign(image, to: analysis)
+            let paper = Paper.flatten(photo, size: size)
+            let aligned = DrawingCheck.autoAlign(paper, to: analysis)
             await MainActor.run {
                 if let aligned {
                     setCheck(aligned)
                 } else {
-                    unaligned = image
+                    unaligned = paper
                     eyeClicks = []
                 }
             }
         }
     }
 
-    private func clickEye(_ point: CGPoint, in drawing: CGImage) {
+    private func clickEye(_ point: CGPoint, in paper: Paper) {
         eyeClicks.append(point)
         guard eyeClicks.count == 2, let analysis = lesson?.analysis else { return }
         let sorted = eyeClicks.sorted { $0.x < $1.x }
         unaligned = nil
         eyeClicks = []
         Task.detached {
-            let aligned = DrawingCheck.align(drawing, eyes: (sorted[0], sorted[1]), to: analysis)
+            let aligned = DrawingCheck.align(paper, eyes: (sorted[0], sorted[1]), to: analysis)
             await MainActor.run { if let aligned { setCheck(aligned) } }
         }
     }
@@ -509,9 +633,9 @@ struct ContentView: View {
 
     private func updateTones() {
         guard let analysis = lesson?.analysis else { return }
-        let value = Float(balance)
+        let value = Float(balance), count = valueCount, form = lesson?.form?.maps
         Task.detached {
-            let tones = LessonBuilder.toneMaps(analysis, balance: value)
+            let tones = LessonBuilder.toneMaps(analysis, balance: value, count: count, form: form)
             await MainActor.run {
                 lesson?.tones = tones
                 refreshDifference()
@@ -522,9 +646,14 @@ struct ContentView: View {
     private func refreshDifference() {
         guard let check, let lesson else { return }
         difference = nil
+        selectedSuggestion = nil
         Task.detached {
             let result = check.difference(to: lesson)
-            await MainActor.run { difference = result }
+            let list = check.suggestions(for: lesson)
+            await MainActor.run {
+                difference = result
+                suggestions = list
+            }
         }
     }
 

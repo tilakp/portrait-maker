@@ -17,6 +17,7 @@ RESOURCES=()                              # files under Sources/$APP_NAME/Resour
 # SwiftUI macros need the Xcode toolchain, not only the Command Line Tools.
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 swift build -c release
+./scripts/fetch_model.sh
 
 APP="$APP_NAME.app"
 rm -rf "$APP"
@@ -25,6 +26,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/release/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp -R Models/DepthAnything.mlmodelc "$APP/Contents/Resources/"
+cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 for resource in ${RESOURCES[@]+"${RESOURCES[@]}"}; do
     cp "Sources/$APP_NAME/Resources/$resource" "$APP/Contents/Resources/$resource"
 done
