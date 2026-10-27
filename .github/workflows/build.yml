@@ -1,0 +1,33 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app bundle
+        run: ./build_app.sh
+
+      - name: Package
+        run: ditto -c -k --keepParent PortraitMaker.app PortraitMaker.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PortraitMaker
+          path: PortraitMaker.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" PortraitMaker.zip --title "PortraitMaker ${GITHUB_REF_NAME}" --generate-notes
