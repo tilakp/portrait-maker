@@ -10,6 +10,10 @@ struct Measurement: Identifiable {
     let typical: String
     /// Lines that show what was measured, in pixels, top-left origin.
     let segments: [(CGPoint, CGPoint)]
+    /// A plain sentence when this face is different from a typical face, else nil.
+    var note: String? = nil
+    /// How different, in units of the normal spread. Larger is more special.
+    var weight: Double = 0
 }
 
 enum Measurements {
@@ -46,36 +50,70 @@ enum Measurements {
         let lower = g.height(g.noseBase) - g.height(g.chin)
         let eyeLine = (g.height(crown) - g.height(g.eyes)) / headHeight
 
+        // A note when the face is outside the normal spread around the canon.
+        func differs(_ actual: CGFloat, _ typical: CGFloat, _ spread: CGFloat, more: String, less: String) -> (String?, Double) {
+            let d = actual - typical
+            guard abs(d) > spread else { return (nil, 0) }
+            return (d > 0 ? more : less, Double(abs(d) / spread))
+        }
+        let eyePercent = Int((eyeLine * 100).rounded())
+        let eyes = differs(eyeLine, 0.5, 0.04,
+                           more: "The eyes are lower than usual: at \(eyePercent)% of the head height from the top.",
+                           less: "The eyes are higher than usual: at \(eyePercent)% of the head height from the top.")
+        let apart = differs(gap / eyeWidth, 1, 0.15,
+                            more: "The eyes are far apart: \(one(gap / eyeWidth)) eye widths between them.",
+                            less: "The eyes are close together: \(one(gap / eyeWidth)) eye widths between them.")
+        let wide = differs(faceWidth / eyeWidth, 5, 0.4,
+                           more: "The face is wide: \(one(faceWidth / eyeWidth)) eye widths at the cheeks.",
+                           less: "The face is narrow: \(one(faceWidth / eyeWidth)) eye widths at the cheeks.")
+        let lowerFace = differs(lower / max(middle, 1), 1, 0.08,
+                                more: "The lower face is long: nose to chin is \(ratio(lower / max(middle, 1))) × brow to nose.",
+                                less: "The lower face is short: nose to chin is \(ratio(lower / max(middle, 1))) × brow to nose.")
+        let noseWidth = (across(nose.max) - across(nose.min)) / eyeWidth
+        let noseNote = differs(noseWidth, 1, 0.15,
+                               more: "The nose is wide: \(one(noseWidth)) eye widths.",
+                               less: "The nose is narrow: \(one(noseWidth)) eye widths.")
+        let mouthRatio = (across(mouth.max) - across(mouth.min)) / max(pupils, 1)
+        let mouthNote = differs(mouthRatio, 1, 0.12,
+                                more: "The mouth is wide: its corners are outside the pupils.",
+                                less: "The mouth is narrow: its corners are inside the pupils.")
+
         var result: [Measurement] = []
         result.append(Measurement(
             title: "Head height to width", value: ratio(headHeight / max(headWidth, 1)),
             typical: "About 1.3 with hair, seen from the front.",
             segments: [(top(g.axis(g.height(crown))), top(g.axis(g.height(g.chin)))), (top(headSides.min), top(headSides.max))]))
         result.append(Measurement(
-            title: "Eye line", value: "\(Int((eyeLine * 100).rounded()))% from the top",
+            title: "Eye line", value: "\(eyePercent)% from the top",
             typical: "About 50% of the head height.",
-            segments: [(top(g.axis(g.height(crown))), top(g.axis(g.height(g.eyes)))), (top(first.min), top(second.max))]))
+            segments: [(top(g.axis(g.height(crown))), top(g.axis(g.height(g.eyes)))), (top(first.min), top(second.max))],
+            note: eyes.0, weight: eyes.1))
         result.append(Measurement(
             title: "Space between the eyes", value: "\(one(gap / eyeWidth)) eye widths",
             typical: "About 1 eye width.",
-            segments: [(top(first.max), top(second.min)), (top(first.min), top(first.max))]))
+            segments: [(top(first.max), top(second.min)), (top(first.min), top(first.max))],
+            note: apart.0, weight: apart.1))
         result.append(Measurement(
             title: "Face width at the cheeks", value: "\(one(faceWidth / eyeWidth)) eye widths",
             typical: "About 5 eye widths.",
-            segments: [(top(jaw.min), top(jaw.max))]))
+            segments: [(top(jaw.min), top(jaw.max))],
+            note: wide.0, weight: wide.1))
         result.append(Measurement(
             title: "Nose base to chin", value: "\(ratio(lower / max(middle, 1))) × brow to nose base",
             typical: "About 1: the lower two thirds of the face are equal.",
             segments: [(top(g.axis(g.height(g.brow))), top(g.axis(g.height(g.noseBase)))),
-                       (top(g.axis(g.height(g.noseBase))), top(g.axis(g.height(g.chin))))]))
+                       (top(g.axis(g.height(g.noseBase))), top(g.axis(g.height(g.chin))))],
+            note: lowerFace.0, weight: lowerFace.1))
         result.append(Measurement(
-            title: "Nose width", value: "\(one((across(nose.max) - across(nose.min)) / eyeWidth)) eye widths",
+            title: "Nose width", value: "\(one(noseWidth)) eye widths",
             typical: "About 1 eye width: the wings of the nose are below the inner corners of the eyes.",
-            segments: [(top(nose.min), top(nose.max))]))
+            segments: [(top(nose.min), top(nose.max))],
+            note: noseNote.0, weight: noseNote.1))
         result.append(Measurement(
-            title: "Mouth width", value: "\(ratio((across(mouth.max) - across(mouth.min)) / max(pupils, 1))) × the space between the pupils",
+            title: "Mouth width", value: "\(ratio(mouthRatio)) × the space between the pupils",
             typical: "About 1: the corners of the mouth are below the pupils.",
-            segments: [(top(mouth.min), top(mouth.max)), (top(g.leftEye), top(g.rightEye))]))
+            segments: [(top(mouth.min), top(mouth.max)), (top(g.leftEye), top(g.rightEye))],
+            note: mouthNote.0, weight: mouthNote.1))
 
         // Tilt: the angle of the eye line. Positive when the eye on the right is higher.
         let tilt = atan2(g.across.y, g.across.x) * 180 / .pi
@@ -83,7 +121,9 @@ enum Measurements {
             result.append(Measurement(
                 title: "Head tilt", value: "\(Int(abs(tilt).rounded()))° \(tilt > 0 ? "up to the right" : "down to the right")",
                 typical: "Draw the eye line at this angle, and all the other feature lines parallel to it.",
-                segments: [(top(first.min), top(second.max))]))
+                segments: [(top(first.min), top(second.max))],
+                note: abs(tilt) >= 3 ? "The head tilts \(Int(abs(tilt).rounded()))°. Draw the eye line and all the feature lines at this angle." : nil,
+                weight: Double(abs(tilt)) / 3))
         }
         // Turn: compare the two sides of the face from the face axis at the cheeks.
         let center = across(g.axis(g.height(g.eyes)))
@@ -93,7 +133,9 @@ enum Measurements {
             result.append(Measurement(
                 title: "Turn of the head", value: "far side \(ratio(turn)) × near side",
                 typical: "In a front view both sides are equal. The far side looks narrower when the head turns.",
-                segments: [(top(jaw.min), top(g.axis(g.height(g.eyes)))), (top(g.axis(g.height(g.eyes))), top(jaw.max))]))
+                segments: [(top(jaw.min), top(g.axis(g.height(g.eyes)))), (top(g.axis(g.height(g.eyes))), top(jaw.max))],
+                note: "The head is turned: the far side of the face is only \(ratio(turn)) × the near side.",
+                weight: Double((0.9 - turn) / 0.1)))
         }
         return result
     }

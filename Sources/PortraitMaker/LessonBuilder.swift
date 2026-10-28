@@ -90,7 +90,8 @@ struct Lesson {
         switch stage {
         case .planes:
             guard let form else { return lines[.blockIn] ?? [] }
-            return [Layer(image: form.planes)] + (lines[.blockIn]?.suffix(1).map { Layer(image: $0.image, opacity: 0.5) } ?? [])
+            // The planes with the outline of the block-in (its second layer) on top.
+            return [Layer(image: form.planes)] + (lines[.blockIn].map { [Layer(image: $0[1].image, opacity: 0.5)] } ?? [])
         case .shadows: return [Layer(image: form?.families ?? tones.images[.shadows]!)]
         case .form: return [Layer(image: form?.classes ?? tones.images[.shadows]!)]
         case .edges: return [Layer(image: edges)]
@@ -108,6 +109,8 @@ struct Lesson {
             return FormClass.allCases.filter { $0 != .background }.map { ($0.color, $0.name) }
         case .values:
             return tones.tones.enumerated().map { (($0.element, $0.element, $0.element), "\($0.offset + 1)") }
+        case .darks:
+            return [((0.08, 0.08, 0.08), "Darkest darks"), ((1, 0.82, 0.3), "Highlights")]
         default:
             return []
         }
@@ -118,9 +121,9 @@ enum LessonBuilder {
     static let maxSide = 1000
 
     static let familyColors: [(color: (Float, Float, Float), name: String)] = [
-        ((1, 1, 1), "Light family"),
-        ((0.86, 0.8, 0.7), "Dark local value in the light"),
-        ((0.55, 0.55, 0.57), "Shadow family"),
+        ((1, 1, 1), "Light"),
+        ((0.86, 0.8, 0.7), "Dark hair or clothes in the light"),
+        ((0.55, 0.55, 0.57), "Shadow"),
     ]
 
     /// Grays for a value scale, lightest first, at even steps of perceived lightness (CIE L*).
@@ -210,7 +213,7 @@ enum LessonBuilder {
             photo: photo,
             lines: [
                 .proportions: [Layer(image: proportions)],
-                .blockIn: [Layer(image: proportions, opacity: 0.3), Layer(image: blockIn)],
+                .blockIn: [Layer(image: proportions, opacity: 0.35), Layer(image: blockIn), Layer(image: features)],
                 .features: [Layer(image: blockIn, opacity: 0.4), Layer(image: features)],
             ],
             edges: edgeMap(analysis, skin: form?.form.skin),
@@ -286,7 +289,8 @@ enum LessonBuilder {
             if let form { return form.classes[i] == .highlight }
             return mask[i] && a.medium[i] >= brightest
         }
-        func faded(_ i: Int) -> Float { 1 - (1 - tones[steps[i]]) * 0.2 }
+        // Outside the person is white paper.
+        func faded(_ i: Int) -> Float { mask[i] ? 1 - (1 - tones[steps[i]]) * 0.2 : 1 }
 
         let baseTone = rgbaImage(w, h) { i in
             let v: Float = mask[i] && !isHighlight(i) ? tones[min(1, count - 1)] : 1
@@ -298,10 +302,12 @@ enum LessonBuilder {
             return (v, v, v)
         }
         let values = rgbaImage(w, h) { i in
-            let v = tones[steps[i]]
+            let v = mask[i] ? tones[steps[i]] : 1
             return (v, v, v)
         }
+        // The darkest darks in black and the highlights in yellow, together.
         let darks = rgbaImage(w, h) { i in
+            if isHighlight(i) { return (1, 0.82, 0.3) }
             let v: Float = steps[i] == count - 1 ? 0.08 : faded(i)
             return (v, v, v)
         }

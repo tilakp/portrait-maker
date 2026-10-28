@@ -88,3 +88,61 @@ enum Stage: Int, CaseIterable, Identifiable {
         }
     }
 }
+
+/// The four steps that the artist sees, in the order of drawing. Each step has two views:
+/// the main one, and one with more detail.
+enum Step: Int, CaseIterable, Identifiable {
+    case shape, light, values, finish
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .shape: "Shape"
+        case .light: "Light & shadow"
+        case .values: "Values"
+        case .finish: "Finish"
+        }
+    }
+
+    /// The names of the two views.
+    var views: (String, String) {
+        switch self {
+        case .shape: ("Lines", "Planes")
+        case .light: ("Shadows", "Form")
+        case .values: ("Values", "Darks & lights")
+        case .finish: ("Edges", "Photo")
+        }
+    }
+
+    /// The stage that each view shows.
+    func stage(detail: Bool) -> Stage {
+        switch self {
+        case .shape: detail ? .planes : .blockIn
+        case .light: detail ? .form : .shadows
+        case .values: detail ? .darks : .values
+        case .finish: detail ? .details : .edges
+        }
+    }
+
+    func instructions(detail: Bool) -> String {
+        switch (self, detail) {
+        case (.shape, false):
+            "Draw the big shape of the head with light, straight lines. Then put the eyes, nose and mouth on the blue lines."
+        case (.shape, true):
+            "See the head as a few flat planes. Each plane gets one value, and the values change where the planes turn."
+        case (.light, false):
+            "Hatch one light tone over the head, but not on the brightest spots. Then put a darker tone over all the gray: that is the shadow. Tan areas are dark hair or clothes in the light, not shadow."
+        case (.light, true):
+            "Inside the shadow, the core shadow next to the light is the darkest. Reflected light makes the rest of the shadow a little lighter. Cast shadows have sharp edges."
+        case (.values, false):
+            "Match each area to its gray. Build up the values slowly over the whole head, not one part at a time."
+        case (.values, true):
+            "Make the black areas your darkest darks. Lift the yellow spots with an eraser: they are the brightest lights."
+        case (.finish, false):
+            "Keep the edges on the dark lines sharp. Make all the other edges soft."
+        case (.finish, true):
+            "Add the small details last. Squint to check that the big values are still right."
+        }
+    }
+}

@@ -1,49 +1,31 @@
 # Portrait Maker
 
-A Mac app that teaches you to draw a portrait from a photo, the way a drawing teacher would. Open a portrait, and the app makes 13 guide steps: proportions and the block-in, the planes of the head, the light and shadow families, the form (halftone, core shadow, reflected light, cast shadows), value steps, edges and details. Then take a photo of your drawing: the app aligns it to the reference and lists what to correct, with distances in millimeters on your paper.
+A Mac app that teaches you to draw a portrait from a photo, one step at a time, the way a drawing teacher would. Open a portrait and follow four steps: **Shape**, **Light & shadow**, **Values** and **Finish**. Each step shows one guide picture and tells you in a sentence or two what to draw. When you are done, take a photo of your drawing: the app tells you the few things to correct first, and shows on your drawing where they are.
 
 The method follows a tutorial by [Will Davies (@willdaviesart)](https://www.instagram.com/willdaviesart/): change the photo into a few flat value shapes, then copy those shapes in order, instead of shading small parts one at a time.
 
 <p align="center">
-  <img src="docs/form.png" width="720" alt="Form step: highlight, light, halftone, core shadow, shadow, reflected light, cast shadow and dark local values, with the light direction">
+  <img src="docs/light.png" width="720" alt="Light and shadow step: one guide picture with the shadow shapes, the photo and a short instruction">
 </p>
 <p align="center">
-  <img src="docs/planes.png" width="380" alt="Planes of the head, shaded by the light in the photo">
-  <img src="docs/check.png" width="380" alt="Drawing check: a list of corrections in millimeters and value steps">
+  <img src="docs/shape.png" width="380" alt="Shape step: straight-line block-in with guide lines, and notes about this face">
+  <img src="docs/check.png" width="380" alt="Check my drawing: numbered marks on the drawing and the three most important corrections">
 </p>
 
-## What it does
+## The four steps
 
-**The 3D form of the head.** A depth model (Depth Anything V2) gives the form of the head. From it, and from the photo, the app finds:
+| Step | Main view | More detail |
+|---|---|---|
+| 1. Shape | The big shape in straight lines, with guide lines for the eyes, nose and mouth. Notes such as "The eyes are far apart" show what is special about this face. | The planes of the head |
+| 2. Light & shadow | The shadow shapes. Dark hair or clothes in the light are shown apart from the shadow. | The form: halftone, core shadow, reflected light, cast shadows |
+| 3. Values | The photo in a few flat grays. Choose from 2 to 9 values. | The darkest darks and the highlights |
+| 4. Finish | Hard and soft edges | The photo, for the details |
 
-- the direction of the light, for example "The light comes from above and the left, 59° from the front"
-- the **light family** and the **shadow family**, separate from **dark local values**: hair, a beard or a dark coat in the light are not shadows, and a threshold on the photo alone cannot tell the difference
-- the **form**: highlight, light, halftone, core shadow, shadow, reflected light and cast shadows
-- the **planes of the head**, each shaded flat by the light in the photo
+**Check my drawing.** Photograph all of your paper and choose the paper size. The app finds the paper, lines your drawing up with the photo, and lists the corrections, the most important first: for example "Eye on the right: Move it 2.2 mm up", or "Cheek on the right, shadow side: About 1 value step too light". Numbers on your drawing show where each correction is. Turn on **Guide lines** or **Value errors** to see more.
 
-**13 steps in 4 groups.** You can skip any step from the sidebar.
+**Tools in the toolbar:** a grid, Squint (blur), Flip (mirror) and Compare values (two points on the same neutral gray, so the values around them cannot trick your eye).
 
-| Group | Steps |
-|---|---|
-| Shape | Proportions (skull circle, jaw, brow, nose and chin lines), Block-in with straight lines, Planes, Features on guide lines |
-| Tone | Base tone, Shadow shapes (the two families), Form, Values (2 to 9 steps), Darkest accents, Highlights |
-| Finish | Edges (hard and soft), Details |
-| Check | Check your drawing |
-
-**Measurements in the units that artists use.** For example: the eye line as a part of the head height, the space between the eyes and the face width in eye widths, and the nose base to the chin against the brow to the nose base. Each one has the usual canon value next to it. Click a measurement to see it on the picture. The **Measure** tool gives the length between two points in eye widths and as a part of the head height, and the angle from vertical.
-
-**Values.** You choose 2 to 9 value steps, and step 1 is the lightest. Each step shows the median tone of the photo in that step. **Compare values** shows two points on the same neutral gray, with their steps, so that the values around them cannot trick your eye.
-
-**Check your drawing.**
-- The app finds the paper in the photo, removes the perspective and makes the paper white. With the paper size (A4, A3, Letter, 9 × 12 in or 11 × 14 in), it knows the millimeters for each pixel.
-- It aligns the drawing by the eyes, found automatically or by two clicks, then by the tones of the full head.
-- **Shapes.** Each feature and each side of the head is searched again, and the error is measured against the drawing as a whole. A drawing that is a little larger or turned is not an error. For example: "Eye on the right: Move it 2.2 mm up." or "Mouth: It is 15% too wide: check its corners against the pupils."
-- **Values.** Connected patches that are wrong, named by the area and the family. For example: "Cheek on the right, shadow side: About 1 value step too light in an area about 12 mm wide."
-- Pencil cannot be as dark as a photo, so the drawing is compared in its own range of values.
-
-**Tools:** grid (3 to 8 columns of square cells), squint (blur), flip (mirror), and the photo under the lines.
-
-All image processing happens on your Mac. The app makes no network calls. The depth model is in the app bundle.
+Behind the simple screens, a depth model gives the 3D form of the head. This is how the app finds the direction of the light, tells shadow from dark hair, and shades the planes. All image processing happens on your Mac. The app makes no network calls, and the depth model is in the app bundle.
 
 ## Accuracy
 
@@ -83,8 +65,8 @@ The first time the app starts after an install, Core ML prepares the depth model
 ## Usage
 
 1. Open a portrait: click **Open**, or drop a photo on the window. A clear photo with strong light from one side gives the best results.
-2. Go through the steps with **Next** (Return) and **Back**, or click a step in the sidebar.
-3. On **Check your drawing**, add a photo of all of your paper from straight above, in even light, on a darker table, and choose the paper size. If the app does not find the face in your drawing, click the center of the eye on the left, then the eye on the right.
+2. Go through the steps with **Next** (Return) and **Back**, or click a step at the top. The switch at the top right of each step shows more detail.
+3. On **Check my drawing**, add a photo of all of your paper from straight above, in even light, on a darker table, and choose the paper size. If the app does not find the face in your drawing, click the center of the eye on the left, then the eye on the right.
 
 From the terminal:
 
@@ -115,7 +97,7 @@ Set `PM_DEBUG=1` to print the timing of each step and the result of each local s
 
 ```
 Sources/PortraitMaker/
-  Stage.swift            the steps, their order and their instructions
+  Stage.swift            the four steps, their views and instructions
   LessonBuilder.swift    Vision, value maps, edges, lines, and the lesson model
   FormAnalysis.swift     depth model, normals and the light fit
   FormClasses.swift      light and shadow families, form classes and planes

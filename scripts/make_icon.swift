@@ -1,5 +1,5 @@
-// Draws the app icon: a head built from the skull circle and the jaw, with a light
-// side and a shadow side. Run: swift scripts/make_icon.swift Resources/AppIcon.png
+// Draws the app icon: a simple head shape with a light side and a shadow side.
+// Run: swift scripts/make_icon.swift Resources/AppIcon.png
 import AppKit
 
 let size = 1024.0
@@ -36,21 +36,11 @@ ctx.setFillColor(CGColor(gray: 0.28, alpha: 1))
 ctx.fill(CGRect(x: 560, y: 0, width: 38, height: 1024))
 ctx.restoreGState()
 
-// Construction lines: the outline, the face axis and the brow, nose and chin lines.
+// A bold outline, so that the head reads at small sizes.
 ctx.setStrokeColor(CGColor(gray: 0.15, alpha: 1))
-ctx.setLineWidth(14)
+ctx.setLineWidth(22)
 ctx.setLineJoin(.round)
 ctx.addPath(head)
-ctx.strokePath()
-ctx.setStrokeColor(CGColor(red: 0.2, green: 0.45, blue: 0.9, alpha: 0.9))
-ctx.setLineWidth(10)
-ctx.setLineDash(phase: 0, lengths: [34, 22])
-for y in [520.0, 400.0, 250.0] {
-    ctx.move(to: CGPoint(x: 300, y: y))
-    ctx.addLine(to: CGPoint(x: 724, y: y))
-}
-ctx.move(to: CGPoint(x: 512, y: 840))
-ctx.addLine(to: CGPoint(x: 512, y: 215))
 ctx.strokePath()
 image.unlockFocus()
 
