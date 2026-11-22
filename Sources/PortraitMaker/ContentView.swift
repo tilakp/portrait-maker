@@ -32,7 +32,13 @@ struct ContentView: View {
     @State private var flip = false
     @State private var compare = false
     @State private var grid = 0
-    @State private var valueCount = 5
+    /// Start with two values (light and shadow), then add values one at a time.
+    @State private var valueCount = 2
+    /// One small value map for each number of values, from 2 to 9.
+    @State private var progression: [CGImage] = []
+    /// The value step whose areas are shown in orange, and that picture.
+    @State private var selectedValue: Int?
+    @State private var valueHighlight: CGImage?
     @State private var probes: [Probe] = []
     @State private var selectedNote: UUID?
     @State private var importTarget: ImportTarget?
@@ -94,7 +100,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: compare) { probes = [] }
-        .onChange(of: step) { selectedNote = nil }
+        .onChange(of: step) {
+            selectedNote = nil
+            selectValue(nil)
+        }
         .onAppear {
             Task.detached(priority: .utility) { FormAnalyzer.warmUp() }
             // Paths at launch open a portrait and a drawing: open -a PortraitMaker --args <portrait> [<drawing>]
@@ -166,8 +175,11 @@ struct ContentView: View {
                     Stepper(value: $valueCount, in: 2...9) {
                         Text("\(valueCount) values").monospacedDigit()
                     }
-                    .onChange(of: valueCount) { updateTones() }
-                    .help("Fewer values are easier. More values show more detail.")
+                    .onChange(of: valueCount) {
+                        selectValue(nil)
+                        updateTones()
+                    }
+                    .help("Start with 2 values. Add one value at a time to see more detail.")
                 }
                 Picker("View", selection: Binding(get: { detail[step] ?? false }, set: { detail[step] = $0 })) {
                     Text(step.views.0).tag(false)
@@ -180,11 +192,16 @@ struct ContentView: View {
             Text(step.instructions(detail: showDetail))
                 .font(.title3)
                 .fixedSize(horizontal: false, vertical: true)
+            if stage == .values { progressionStrip }
             HStack(alignment: .top, spacing: 16) {
                 picture(
-                    lesson.layers(for: stage), pixelWidth: lesson.gray.width,
+                    stage == .values && valueHighlight != nil ? [Layer(image: valueHighlight!)] : lesson.layers(for: stage),
+                    pixelWidth: lesson.gray.width,
                     underlay: stage == .blockIn ? lesson.photo : nil,
-                    markers: probeMarkers, overlays: noteOverlays(lesson), onTap: probe
+                    markers: probeMarkers, overlays: noteOverlays(lesson),
+                    onTap: { point in
+                        if compare { probe(point) } else if stage == .values { pickValue(at: point) }
+                    }
                 )
                 VStack(alignment: .leading, spacing: 12) {
                     if stage != .details {
@@ -204,8 +221,20 @@ struct ContentView: View {
                 if compare {
                     compareReadout
                 } else {
-                    ForEach(Array(lesson.legend(for: stage).enumerated()), id: \.offset) { _, item in
-                        legend(Color(red: Double(item.color.0), green: Double(item.color.1), blue: Double(item.color.2)), item.name)
+                    ForEach(Array(lesson.legend(for: stage).enumerated()), id: \.offset) { index, item in
+                        let swatch = legend(Color(red: Double(item.color.0), green: Double(item.color.1), blue: Double(item.color.2)), item.name)
+                        if stage == .values {
+                            // Click a gray to see all the areas with that value.
+                            Button { selectValue(selectedValue == index ? nil : index) } label: {
+                                swatch
+                                    .padding(3)
+                                    .background(RoundedRectangle(cornerRadius: 5).stroke(Color.orange, lineWidth: selectedValue == index ? 2 : 0))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Show all the areas with this value")
+                        } else {
+                            swatch
+                        }
                     }
                 }
                 Spacer()
@@ -218,6 +247,44 @@ struct ContentView: View {
             }
             .frame(minHeight: 32)
         }
+    }
+
+    /// The value map with 2, 3, … 9 values side by side. Click one to use that number of values.
+    private var progressionStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(progression.enumerated()), id: \.offset) { index, image in
+                let count = index + 2
+                Button { valueCount = count } label: {
+                    VStack(spacing: 2) {
+                        Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
+                            .frame(height: 64)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 3)
+                                    .stroke(count == valueCount ? Color.accentColor : .secondary.opacity(0.3), lineWidth: count == valueCount ? 3 : 1)
+                            )
+                        Text("\(count)").font(.caption).monospacedDigit()
+                            .fontWeight(count == valueCount ? .bold : .regular)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Use \(count) values")
+            }
+        }
+    }
+
+    /// Shows all the areas with the value of the clicked point, or none when it is already shown.
+    private func pickValue(at point: CGPoint) {
+        guard let lesson else { return }
+        let x = min(max(Int(point.x), 0), lesson.gray.width - 1), y = min(max(Int(point.y), 0), lesson.gray.height - 1)
+        let i = y * lesson.gray.width + x
+        guard lesson.analysis.mask[i] else { return selectValue(nil) }
+        let k = lesson.tones.steps[i]
+        selectValue(selectedValue == k ? nil : k)
+    }
+
+    private func selectValue(_ k: Int?) {
+        selectedValue = k
+        valueHighlight = k.flatMap { lesson?.valueHighlight(step: $0) }
     }
 
     /// At most three plain notes about what is special in this face. Click one to see it.
@@ -478,6 +545,8 @@ struct ContentView: View {
                         .position(x: fit.minX + x * scale, y: fit.minY + point.y * scale)
                 }
             }
+            // Fill all of the space: the offset moves the picture, but not the area that gets clicks.
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
             .onTapGesture(coordinateSpace: .local) { location in
                 guard fit.contains(location) else { return }
@@ -567,11 +636,15 @@ struct ContentView: View {
         unaligned = nil
         checking = false
         step = .shape
+        selectValue(nil)
+        progression = []
         let count = valueCount
         Task.detached {
             let built = LessonBuilder.build(from: image, valueCount: count)
+            let strip = LessonBuilder.valueProgression(built.analysis)
             await MainActor.run {
                 lesson = built
+                progression = strip
                 loading = false
                 if let drawing { openDrawing(drawing) }
             }

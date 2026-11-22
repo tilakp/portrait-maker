@@ -50,6 +50,27 @@ final class AnalysisTests: XCTestCase {
         XCTAssertTrue(form(SIMD3(1, 0, 1)).lightDescription.hasPrefix("The light comes from the right"))
     }
 
+    /// A gradient from white to black: each number of values splits it into even, ordered bands.
+    func testValueStepsSplitGradientEvenly() {
+        let w = 90, h = 10
+        let pixels = (0..<(w * h)).map { 1 - Float($0 % w) / Float(w - 1) }
+        let a = Analysis(
+            gray: GrayImage(width: w, height: h, pixels: pixels), mask: [Bool](repeating: true, count: w * h),
+            soft: pixels, medium: pixels, faceArea: Array(pixels.indices), faceTones: pixels.sorted(), eyes: nil
+        )
+        for count in 2...9 {
+            let v = LessonBuilder.valueSteps(a, balance: 0, count: count)
+            let row = Array(v.steps[0..<w])
+            XCTAssertEqual(row, row.sorted(), "light to dark from left to right")
+            XCTAssertEqual(Set(row).count, count, "all \(count) steps are used")
+            XCTAssertEqual(v.tones, v.tones.sorted(by: >), "lightest first")
+            for k in 0..<count {
+                XCTAssertEqual(Double(row.filter { $0 == k }.count), Double(w) / Double(count), accuracy: 2)
+            }
+        }
+        XCTAssertEqual(LessonBuilder.valueProgression(a).count, 8)
+    }
+
     func testValueTonesGoFromLightToDark() {
         for count in 2...9 {
             let tones = LessonBuilder.valueTones(count: count)

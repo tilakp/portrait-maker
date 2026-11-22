@@ -136,7 +136,7 @@ enum Step: Int, CaseIterable, Identifiable {
         case (.light, true):
             "Inside the shadow, the core shadow next to the light is the darkest. Reflected light makes the rest of the shadow a little lighter. Cast shadows have sharp edges."
         case (.values, false):
-            "Match each area to its gray. Build up the values slowly over the whole head, not one part at a time."
+            "Start with 2 values: light and dark. Then add one value at a time and see how each shape splits. Click an area or a gray to see all the areas with that value."
         case (.values, true):
             "Make the black areas your darkest darks. Lift the yellow spots with an eraser: they are the brightest lights."
         case (.finish, false):

@@ -100,6 +100,16 @@ struct Lesson {
         }
     }
 
+    /// The value map with all the areas of one step in orange and the other steps faded.
+    func valueHighlight(step k: Int) -> CGImage {
+        LessonBuilder.rgbaImage(gray.width, gray.height) { i in
+            guard analysis.mask[i] else { return (1, 1, 1) }
+            if tones.steps[i] == k { return (1, 0.5, 0.1) }
+            let v = 1 - (1 - tones.tones[tones.steps[i]]) * 0.3
+            return (v, v, v)
+        }
+    }
+
     /// The colors that a stage uses, with their names, for the legend below the picture.
     func legend(for stage: Stage) -> [(color: (Float, Float, Float), name: String)] {
         switch stage {
@@ -270,20 +280,7 @@ enum LessonBuilder {
     static func toneMaps(_ a: Analysis, balance: Float, count: Int, form: FormMaps?) -> ToneMaps {
         let w = a.width, h = a.height, mask = a.mask
         let shift = balance * 0.2
-        // Even parts of the face for each step, moved by the shadow amount.
-        let thresholds = (1..<count).map { k in a.percentile(1 - Float(k) / Float(count) + shift) }
-        let steps = a.medium.indices.map { i -> Int in
-            mask[i] ? thresholds.filter { a.medium[i] < $0 }.count : 0
-        }
-        // Each step shows the median tone of the photo in that step, so that the map, the photo and
-        // the drawing check agree. A step with no pixels takes the gray of an even value scale.
-        var groups = [[Float]](repeating: [], count: count)
-        for i in a.faceArea { groups[steps[i]].append(a.medium[i]) }
-        let even = valueTones(count: count)
-        let tones = groups.indices.map { k -> Float in
-            let g = groups[k].sorted()
-            return g.isEmpty ? even[k] : g[g.count / 2]
-        }
+        let (thresholds, steps, tones) = valueSteps(a, balance: balance, count: count)
         let brightest = a.percentile(0.92 + shift * 0.25)
         func isHighlight(_ i: Int) -> Bool {
             if let form { return form.classes[i] == .highlight }
@@ -320,6 +317,40 @@ enum LessonBuilder {
             images: [.baseTone: baseTone, .shadows: shadows, .values: values, .darks: darks, .highlights: highlights],
             steps: steps, tones: tones, thresholds: thresholds
         )
+    }
+
+    /// The value step of each pixel (0 is the lightest), the gray of each step and the tone where
+    /// each step after the first starts.
+    static func valueSteps(_ a: Analysis, balance: Float, count: Int) -> (thresholds: [Float], steps: [Int], tones: [Float]) {
+        let shift = balance * 0.2
+        // Even parts of the face for each step, moved by the shadow amount.
+        let thresholds = (1..<count).map { k in a.percentile(1 - Float(k) / Float(count) + shift) }
+        let steps = a.medium.indices.map { i -> Int in
+            a.mask[i] ? thresholds.filter { a.medium[i] < $0 }.count : 0
+        }
+        // Each step shows the median tone of the photo in that step, so that the map, the photo and
+        // the drawing check agree. A step with no pixels takes the gray of an even value scale.
+        var groups = [[Float]](repeating: [], count: count)
+        for i in a.faceArea { groups[steps[i]].append(a.medium[i]) }
+        let even = valueTones(count: count)
+        let tones = groups.indices.map { k -> Float in
+            let g = groups[k].sorted()
+            return g.isEmpty ? even[k] : g[g.count / 2]
+        }
+        return (thresholds, steps, tones)
+    }
+
+    /// A small value map for each number of values, from 2 to `maxCount`, so that the artist can
+    /// see how the shapes split as values are added.
+    static func valueProgression(_ a: Analysis, maxCount: Int = 9) -> [CGImage] {
+        (2...maxCount).map { count in
+            let v = valueSteps(a, balance: 0, count: count)
+            let image = rgbaImage(a.width, a.height) { i in
+                let t = a.mask[i] ? v.tones[v.steps[i]] : 1
+                return (t, t, t)
+            }
+            return scaled(image, maxSide: 240)
+        }
     }
 
     /// Strong changes of tone are hard edges. Sobel filter on the medium blur.
