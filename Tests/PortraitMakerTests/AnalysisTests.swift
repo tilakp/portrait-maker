@@ -50,35 +50,59 @@ final class AnalysisTests: XCTestCase {
         XCTAssertTrue(form(SIMD3(1, 0, 1)).lightDescription.hasPrefix("The light comes from the right"))
     }
 
-    /// A gradient from white to black: each number of values splits it into even, ordered bands.
-    func testValueStepsSplitGradientEvenly() {
-        let w = 90, h = 10
-        let pixels = (0..<(w * h)).map { 1 - Float($0 % w) / Float(w - 1) }
-        let a = Analysis(
-            gray: GrayImage(width: w, height: h, pixels: pixels), mask: [Bool](repeating: true, count: w * h),
+    /// An analysis where all of the image is the face, with these tones.
+    private func analysis(_ pixels: [Float], width w: Int) -> Analysis {
+        Analysis(
+            gray: GrayImage(width: w, height: pixels.count / w, pixels: pixels), mask: [Bool](repeating: true, count: pixels.count),
             soft: pixels, medium: pixels, faceArea: Array(pixels.indices), faceTones: pixels.sorted(), eyes: nil
         )
+    }
+
+    /// A gradient from white to black. Each new value splits one value and keeps the others,
+    /// so what the artist drew for fewer values stays correct.
+    func testValueSplitsAreNested() {
+        let w = 90
+        let a = analysis((0..<(w * 10)).map { 1 - Float($0 % w) / Float(w - 1) }, width: w)
+        var previous: [Float] = []
         for count in 2...9 {
-            let v = LessonBuilder.valueSteps(a, balance: 0, count: count)
+            let v = LessonBuilder.valueSteps(a, count: count)
+            XCTAssertEqual(Array(v.thresholds.prefix(previous.count)), previous, "the earlier splits stay")
+            previous = v.thresholds
             let row = Array(v.steps[0..<w])
             XCTAssertEqual(row, row.sorted(), "light to dark from left to right")
             XCTAssertEqual(Set(row).count, count, "all \(count) steps are used")
             XCTAssertEqual(v.tones, v.tones.sorted(by: >), "lightest first")
-            for k in 0..<count {
-                XCTAssertEqual(Double(row.filter { $0 == k }.count), Double(w) / Double(count), accuracy: 2)
-            }
         }
         XCTAssertEqual(LessonBuilder.valueProgression(a).count, 8)
     }
 
-    func testValueNamesHaveOneNamePerStep() {
-        for count in 2...9 {
-            let names = ValueGuide.names(count: count)
-            XCTAssertEqual(names.count, count)
-            XCTAssertEqual(Set(names).count, count, "names are different")
-            XCTAssertFalse(ValueGuide.news(count: count).isEmpty)
-        }
-        XCTAssertEqual(ValueGuide.names(count: 2), ["Light", "Shadow"])
+    /// Three groups of tones: two in the light (0.9 and 0.7) and one shadow (0.2). The first split
+    /// separates the light from the shadow, and the second split is in the light.
+    func testSplitsFollowTheLightAndShadow() throws {
+        let w = 100
+        let a = analysis((0..<(w * 10)).map { i -> Float in
+            let x = i % w
+            return x < 30 ? 0.9 : x < 60 ? 0.7 : 0.2
+        }, width: w)
+        let two = LessonBuilder.toneMaps(a, balance: 0, count: 2, form: nil)
+        let first = try XCTUnwrap(two.thresholds.first)
+        XCTAssertTrue(first > 0.2 && first <= 0.7, "the split is between the shadow and the light: \(first)")
+        XCTAssertEqual(two.lightCount, 1)
+        XCTAssertNil(two.newValue)
+        XCTAssertEqual(two.shown, [1, 0.08], "two values are black and white")
+
+        let three = LessonBuilder.toneMaps(a, balance: 0, count: 3, form: nil)
+        XCTAssertEqual(three.lightCount, 2)
+        XCTAssertTrue(three.newValueInLight)
+        XCTAssertEqual(three.newValue, three.steps[40], "the new value is the darker part of the light")
+        XCTAssertEqual(three.steps[40], 1)
+    }
+
+    func testValueNamesFollowTheFamilies() {
+        XCTAssertEqual(ValueGuide.names(count: 2, light: 1), ["Light", "Shadow"])
+        XCTAssertEqual(ValueGuide.names(count: 5, light: 2), ["Light 1", "Light 2", "Shadow 1", "Shadow 2", "Shadow 3"])
+        XCTAssertTrue(ValueGuide.instruction(count: 3, newInLight: true).hasPrefix("The light splits"))
+        XCTAssertTrue(ValueGuide.instruction(count: 3, newInLight: false).hasPrefix("The shadow splits"))
     }
 
     /// A drawing done only in light gray: the check must say that the darks are too light.
@@ -112,7 +136,10 @@ final class AnalysisTests: XCTestCase {
     }
 
     func testStepOfToneUsesThresholds() {
-        let maps = ToneMaps(images: [:], steps: [], tones: [0.9, 0.6, 0.3], thresholds: [0.7, 0.4])
+        let maps = ToneMaps(
+            images: [:], steps: [], tones: [0.9, 0.6, 0.3], thresholds: [0.7, 0.4],
+            outlines: LessonBuilder.rgbaImage(1, 1) { _ in (1, 1, 1) }
+        )
         XCTAssertEqual(maps.step(of: 0.8), 0)
         XCTAssertEqual(maps.step(of: 0.5), 1)
         XCTAssertEqual(maps.step(of: 0.1), 2)

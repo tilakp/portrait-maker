@@ -39,6 +39,7 @@ struct ContentView: View {
     /// The value step whose areas are shown in orange, and that picture.
     @State private var selectedValue: Int?
     @State private var valueHighlight: CGImage?
+    @State private var outlines = false
     @State private var probes: [Probe] = []
     @State private var selectedNote: UUID?
     @State private var importTarget: ImportTarget?
@@ -105,6 +106,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: compare) { probes = [] }
+        .onChange(of: valueCount) {
+            selectValue(nil)
+            updateTones()
+        }
         .onChange(of: step) {
             selectedNote = nil
             selectValue(nil)
@@ -176,15 +181,13 @@ struct ContentView: View {
             HStack {
                 Text(step.title).font(.title2.bold())
                 Spacer()
-                if step == .values && !showDetail {
+                if stage == .values {
+                    Toggle("Outlines", isOn: $outlines).toggleStyle(.button)
+                        .help("Draw a line around each value shape")
                     Stepper(value: $valueCount, in: 2...9) {
                         Text("\(valueCount) values").monospacedDigit()
                     }
-                    .onChange(of: valueCount) {
-                        selectValue(nil)
-                        updateTones()
-                    }
-                    .help("Start with 2 values. Add one value at a time to see more detail.")
+                    .help("Start with 2 values. Add one value at a time.")
                 }
                 Picker("View", selection: Binding(get: { detail[step] ?? false }, set: { detail[step] = $0 })) {
                     Text(step.views.0).tag(false)
@@ -194,17 +197,15 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(width: 230)
             }
-            Text(step.instructions(detail: showDetail))
+            Text(stage == .values
+                 ? ValueGuide.instruction(count: lesson.tones.count, newInLight: lesson.tones.newValueInLight)
+                 : step.instructions(detail: showDetail))
                 .font(.title3)
                 .fixedSize(horizontal: false, vertical: true)
-            if stage == .values {
-                progressionStrip
-                Label(ValueGuide.news(count: valueCount), systemImage: "plus.circle")
-                    .foregroundStyle(.secondary)
-            }
+            if stage == .values { progressionStrip }
             HStack(alignment: .top, spacing: 16) {
                 picture(
-                    stage == .values && valueHighlight != nil ? [Layer(image: valueHighlight!)] : lesson.layers(for: stage),
+                    valueLayers(lesson, stage),
                     pixelWidth: lesson.gray.width,
                     underlay: stage == .blockIn ? lesson.photo : nil,
                     markers: probeMarkers, overlays: noteOverlays(lesson),
@@ -218,7 +219,7 @@ struct ContentView: View {
                             // Smaller on the Shape step, to make space for the notes and the tip.
                             .frame(height: step == .shape ? 240 : 300)
                     }
-                    if step == .light || step == .values, let form = lesson.form {
+                    if step == .light, let form = lesson.form {
                         Label(form.form.lightDescription, systemImage: "lightbulb")
                             .foregroundStyle(.secondary)
                     }
@@ -249,15 +250,26 @@ struct ContentView: View {
                     }
                 }
                 Spacer()
-                Button("Back") { step = Step(rawValue: step.rawValue - 1)! }
-                    .disabled(step.rawValue == 0)
-                Button(step == Step.allCases.last ? "Check my drawing" : "Next") {
-                    if let next = Step(rawValue: step.rawValue + 1) { step = next } else { checking = true }
+                // In the value map, Back and Next first remove and add values, one at a time.
+                Button("Back") {
+                    if stage == .values && valueCount > 2 { valueCount -= 1 } else { step = Step(rawValue: step.rawValue - 1)! }
+                }
+                .disabled(step.rawValue == 0)
+                let addsValue = stage == .values && valueCount < ValueGuide.target
+                Button(addsValue ? "Add a value" : step == Step.allCases.last ? "Check my drawing" : "Next") {
+                    if addsValue { valueCount += 1 } else if let next = Step(rawValue: step.rawValue + 1) { step = next } else { checking = true }
                 }
                 .keyboardShortcut(.defaultAction)
             }
             .frame(minHeight: 32)
         }
+    }
+
+    /// The value map, or the highlight of one value, with the outlines of the value shapes on top.
+    private func valueLayers(_ lesson: Lesson, _ stage: Stage) -> [Layer] {
+        guard stage == .values else { return lesson.layers(for: stage) }
+        let map = valueHighlight.map { [Layer(image: $0)] } ?? lesson.layers(for: stage)
+        return outlines ? map + [Layer(image: lesson.tones.outlines, opacity: 0.8, tinted: true)] : map
     }
 
     /// A technique tip and a common beginner mistake for the step.
@@ -727,8 +739,13 @@ struct ContentView: View {
         let count = valueCount, form = lesson?.form?.maps
         Task.detached {
             let tones = LessonBuilder.toneMaps(analysis, balance: 0, count: count, form: form)
+            // A newer value count is on the way: do not show this one.
+            let current = await MainActor.run { valueCount }
+            guard current == count else { return }
             await MainActor.run {
                 lesson?.tones = tones
+                // Show the new value in orange: that is where the next layer of hatching goes.
+                selectValue(tones.newValue)
                 refreshDifference()
             }
         }

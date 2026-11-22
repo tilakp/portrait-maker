@@ -1,6 +1,6 @@
 # Portrait Maker
 
-A Mac app that teaches you to draw a portrait from a photo, one step at a time, the way a drawing teacher would. Open a portrait and follow four steps: **Shape**, **Light & shadow**, **Values** and **Finish**. Each step shows one guide picture and tells you in a sentence or two what to draw. When you are done, take a photo of your drawing: the app tells you the few things to correct first, and shows on your drawing where they are.
+A Mac app that teaches you to draw a portrait from a photo, one step at a time, the way a drawing teacher would. Open a portrait and follow three steps: **Shape**, **Light & shadow** and **Finish**. Each step shows one guide picture and tells you in a sentence or two what to draw. When you are done, take a photo of your drawing: the app tells you the few things to correct first, and shows on your drawing where they are.
 
 The method follows a tutorial by [Will Davies (@willdaviesart)](https://www.instagram.com/willdaviesart/): change the photo into a few flat value shapes, then copy those shapes in order, instead of shading small parts one at a time.
 
@@ -12,14 +12,13 @@ The method follows a tutorial by [Will Davies (@willdaviesart)](https://www.inst
   <img src="docs/check.png" width="380" alt="Check my drawing: numbered marks on the drawing and the three most important corrections">
 </p>
 
-## The four steps
+## The three steps
 
 | Step | Main view | More detail |
 |---|---|---|
 | 1. Shape | The big shape in straight lines, with guide lines for the eyes, nose and mouth. Notes such as "The eyes are far apart" show what is special about this face. | The planes of the head |
-| 2. Light & shadow | The shadow shapes. Dark hair or clothes in the light are shown apart from the shadow. | The form: halftone, core shadow, reflected light, cast shadows |
-| 3. Values | The photo in a few flat grays. Choose from 2 to 9 values. | The darkest darks and the highlights |
-| 4. Finish | Hard and soft edges | The photo, for the details |
+| 2. Light & shadow | First only black and white: the light and the shadow. Then **Add a value**, up to 5 (or 9). Each new value splits one shape into a lighter and a darker part and shows it in orange, so you add one layer of hatching and nothing you drew before changes. Click an area or a gray to see all the areas with that value. | The form: halftone, core shadow, reflected light, cast shadows |
+| 3. Finish | The darkest darks and the highlights | Hard and soft edges |
 
 **Check my drawing.** Photograph all of your paper and choose the paper size. The app finds the paper, lines your drawing up with the photo, and lists the corrections, the most important first: for example "Eye on the right: Move it 2.2 mm up", or "Cheek on the right, shadow side: About 1 value step too light". Numbers on your drawing show where each correction is. Turn on **Guide lines** or **Value errors** to see more.
 
@@ -97,7 +96,7 @@ Set `PM_DEBUG=1` to print the timing of each step and the result of each local s
 
 ```
 Sources/PortraitMaker/
-  Stage.swift            the four steps, their views and instructions
+  Stage.swift            the three steps, their views and instructions
   LessonBuilder.swift    Vision, value maps, edges, lines, and the lesson model
   FormAnalysis.swift     depth model, normals and the light fit
   FormClasses.swift      light and shadow families, form classes and planes

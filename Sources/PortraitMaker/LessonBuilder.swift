@@ -49,10 +49,21 @@ struct ToneMaps {
     let steps: [Int]
     /// The gray of each step, lightest first.
     let tones: [Float]
-    /// The tone where each step after the first starts, from light to dark.
+    /// The tone where each step after the first starts, in the order the values were added.
+    /// The first one separates the light from the shadow. Each later one splits one value in two.
     let thresholds: [Float]
+    /// Lines on the edges between the values, on a clear background.
+    let outlines: CGImage
 
     var count: Int { tones.count }
+    /// The grays to show: black and white for two values, the grays of the photo for more.
+    var shown: [Float] { LessonBuilder.shownTones(tones) }
+    /// The number of values in the light family. The other values are in the shadow family.
+    var lightCount: Int { thresholds.isEmpty ? count : 1 + thresholds.dropFirst().filter { $0 > thresholds[0] }.count }
+    /// The value that the last split added: the darker part of the value that split. Nil for two values.
+    var newValue: Int? { count > 2 && thresholds.count == count - 1 ? thresholds.filter { $0 >= thresholds.last! }.count : nil }
+    /// True when the last split is in the light family.
+    var newValueInLight: Bool { thresholds.count > 1 && thresholds.last! > thresholds[0] }
 
     /// The value step of a tone, with the same thresholds as the map.
     func step(of tone: Float) -> Int { thresholds.filter { tone < $0 }.count }
@@ -105,7 +116,7 @@ struct Lesson {
         LessonBuilder.rgbaImage(gray.width, gray.height) { i in
             guard analysis.mask[i] else { return (1, 1, 1) }
             if tones.steps[i] == k { return (1, 0.5, 0.1) }
-            let v = 1 - (1 - tones.tones[tones.steps[i]]) * 0.3
+            let v = 1 - (1 - tones.shown[tones.steps[i]]) * 0.3
             return (v, v, v)
         }
     }
@@ -118,7 +129,7 @@ struct Lesson {
         case .form where form != nil:
             return FormClass.allCases.filter { $0 != .background }.map { ($0.color, $0.name) }
         case .values:
-            return zip(tones.tones, ValueGuide.names(count: tones.count)).map { (($0, $0, $0), $1) }
+            return zip(tones.shown, ValueGuide.names(count: tones.count, light: tones.lightCount)).map { (($0, $0, $0), $1) }
         case .darks:
             return [((0.08, 0.08, 0.08), "Darkest darks"), ((1, 0.82, 0.3), "Highlights")]
         default:
@@ -280,7 +291,8 @@ enum LessonBuilder {
     static func toneMaps(_ a: Analysis, balance: Float, count: Int, form: FormMaps?) -> ToneMaps {
         let w = a.width, h = a.height, mask = a.mask
         let shift = balance * 0.2
-        let (thresholds, steps, tones) = valueSteps(a, balance: balance, count: count)
+        let (thresholds, steps, tones) = valueSteps(a, count: count)
+        let shown = shownTones(tones)
         let brightest = a.percentile(0.92 + shift * 0.25)
         func isHighlight(_ i: Int) -> Bool {
             if let form { return form.classes[i] == .highlight }
@@ -299,13 +311,15 @@ enum LessonBuilder {
             return (v, v, v)
         }
         let values = rgbaImage(w, h) { i in
-            let v = mask[i] ? tones[steps[i]] : 1
+            let v = mask[i] ? shown[steps[i]] : 1
             return (v, v, v)
         }
-        // The darkest darks in black and the highlights in yellow, together.
+        // The darkest darks in black and the highlights in yellow, together. The darkest value comes
+        // from five values at least, so that two values do not make all of the shadow black.
+        let fine = count >= 5 ? (thresholds, steps) : { let v = valueSteps(a, count: 5); return (v.thresholds, v.steps) }()
         let darks = rgbaImage(w, h) { i in
             if isHighlight(i) { return (1, 0.82, 0.3) }
-            let v: Float = steps[i] == count - 1 ? 0.08 : faded(i)
+            let v: Float = mask[i] && fine.1[i] == fine.0.count ? 0.08 : faded(i)
             return (v, v, v)
         }
         let highlights = rgbaImage(w, h) { i in
@@ -315,16 +329,79 @@ enum LessonBuilder {
         }
         return ToneMaps(
             images: [.baseTone: baseTone, .shadows: shadows, .values: values, .darks: darks, .highlights: highlights],
-            steps: steps, tones: tones, thresholds: thresholds
+            steps: steps, tones: tones, thresholds: thresholds, outlines: outlineImage(steps, mask: mask, w, h)
         )
+    }
+
+    /// Two values show as black and white, like a notan. More values show the grays of the photo.
+    static func shownTones(_ tones: [Float]) -> [Float] { tones.count == 2 ? [1, 0.08] : tones }
+
+    /// Split points for up to `maxCount` values, in the order they are added. The first split
+    /// separates the light from the shadow. Each next split cuts the value with the largest spread
+    /// of tones at its most natural break (Otsu's method). So a new value always splits one shape
+    /// into a lighter and a darker part, and all the other shapes stay the same.
+    static func valueSplits(_ a: Analysis, maxCount: Int) -> [Float] {
+        let bins = 256
+        var histogram = [Double](repeating: 0, count: bins)
+        for i in a.faceArea { histogram[min(bins - 1, max(0, Int(a.medium[i] * Float(bins))))] += 1 }
+        // Each part must have at least 1% of the face, so that no value is only a few spots.
+        let minimum = max(1, histogram.reduce(0, +) * 0.01)
+        // The values as ranges of bins, darkest first.
+        var ranges = [0..<bins]
+        var splits: [Float] = []
+        // The cut of a range that most reduces the spread of its tones, and that reduction.
+        func bestCut(_ r: Range<Int>) -> (bin: Int, gain: Double)? {
+            let n = r.reduce(0.0) { $0 + histogram[$1] }
+            let sum = r.reduce(0.0) { $0 + histogram[$1] * Double($1) }
+            var n1 = 0.0, s1 = 0.0
+            var best: (bin: Int, gain: Double)?
+            for b in r.dropLast() {
+                n1 += histogram[b]
+                s1 += histogram[b] * Double(b)
+                let n2 = n - n1
+                guard n1 >= minimum, n2 >= minimum else { continue }
+                let d = s1 / n1 - (sum - s1) / n2
+                let gain = n1 * n2 / n * d * d
+                if gain > (best?.gain ?? 0) { best = (b + 1, gain) }
+            }
+            return best
+        }
+        while splits.count < maxCount - 1 {
+            let cuts = ranges.indices.compactMap { k in bestCut(ranges[k]).map { (index: k, cut: $0) } }
+            guard let best = cuts.max(by: { $0.cut.gain < $1.cut.gain }) else { break }
+            let r = ranges[best.index]
+            ranges[best.index] = r.lowerBound..<best.cut.bin
+            ranges.insert(best.cut.bin..<r.upperBound, at: best.index + 1)
+            splits.append(Float(best.cut.bin) / Float(bins))
+        }
+        return splits
+    }
+
+    /// Black lines on the edges between the values and on the edge of the person, on a clear background.
+    static func outlineImage(_ steps: [Int], mask: [Bool], _ w: Int, _ h: Int) -> CGImage {
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = y * w + x
+                guard mask[i] else { continue }
+                func differs(_ j: Int) -> Bool { !mask[j] || steps[j] != steps[i] }
+                if (x > 0 && differs(i - 1)) || (x + 1 < w && differs(i + 1)) || (y > 0 && differs(i - w)) || (y + 1 < h && differs(i + w)) {
+                    data[i * 4 + 3] = 255
+                }
+            }
+        }
+        return data.withUnsafeMutableBytes { buffer in
+            CGContext(
+                data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!.makeImage()!
+        }
     }
 
     /// The value step of each pixel (0 is the lightest), the gray of each step and the tone where
     /// each step after the first starts.
-    static func valueSteps(_ a: Analysis, balance: Float, count: Int) -> (thresholds: [Float], steps: [Int], tones: [Float]) {
-        let shift = balance * 0.2
-        // Even parts of the face for each step, moved by the shadow amount.
-        let thresholds = (1..<count).map { k in a.percentile(1 - Float(k) / Float(count) + shift) }
+    static func valueSteps(_ a: Analysis, count: Int) -> (thresholds: [Float], steps: [Int], tones: [Float]) {
+        let thresholds = valueSplits(a, maxCount: count)
         let steps = a.medium.indices.map { i -> Int in
             a.mask[i] ? thresholds.filter { a.medium[i] < $0 }.count : 0
         }
@@ -344,9 +421,10 @@ enum LessonBuilder {
     /// see how the shapes split as values are added.
     static func valueProgression(_ a: Analysis, maxCount: Int = 9) -> [CGImage] {
         (2...maxCount).map { count in
-            let v = valueSteps(a, balance: 0, count: count)
+            let v = valueSteps(a, count: count)
+            let shown = shownTones(v.tones)
             let image = rgbaImage(a.width, a.height) { i in
-                let t = a.mask[i] ? v.tones[v.steps[i]] : 1
+                let t = a.mask[i] ? shown[v.steps[i]] : 1
                 return (t, t, t)
             }
             return scaled(image, maxSide: 240)

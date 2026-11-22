@@ -89,35 +89,33 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
 }
 
-/// Names for the value steps in the words of light and shadow, and what each new value adds.
+/// Names for the values in the two families, light and shadow, and what to draw when a value is added.
 enum ValueGuide {
-    /// One name for each value step, lightest first.
-    static func names(count: Int) -> [String] {
-        switch count {
-        case 2: ["Light", "Shadow"]
-        case 3: ["Light", "Halftone", "Shadow"]
-        case 4: ["Light", "Halftone", "Shadow", "Darkest"]
-        case 5: ["Brightest", "Light", "Halftone", "Shadow", "Darkest"]
-        default: (1...count).map { $0 == 1 ? "1 Lightest" : $0 == count ? "\($0) Darkest" : "\($0)" }
-        }
+    /// The number of values that the Light & shadow step goes up to. More values are optional.
+    static let target = 5
+
+    /// One name for each value, lightest first. `light` is the number of values in the light family.
+    static func names(count: Int, light: Int) -> [String] {
+        func family(_ name: String, _ n: Int) -> [String] { n == 1 ? [name] : (1...n).map { "\(name) \($0)" } }
+        return family("Light", light) + family("Shadow", count - light)
     }
 
-    /// What is new when the map has `count` values.
-    static func news(count: Int) -> String {
-        switch count {
-        case 2: "2 values: the light and the shadow. Draw only these two shapes first."
-        case 3: "New: the halftone. It is the gray where the form turns away from the light."
-        case 4: "New: the darkest darks separate from the shadow, for example the eye sockets, the nostrils and the hair."
-        case 5: "New: the brightest lights separate from the light. They are the planes that face the light."
-        default: "New: smaller steps between the values. Add them only when the big shapes are correct."
+    /// What to draw for the value map. `newInLight` tells which family the last new value is in.
+    static func instruction(count: Int, newInLight: Bool) -> String {
+        if count == 2 {
+            return "Squint and see only two shapes: the light (white) and the shadow (black). Draw the edge of the shadow shape lightly. Then hatch all of the shadow with one even tone. Leave the light as white paper."
         }
+        let more = count < target ? " Click Add a value for the next value." : ""
+        return newInLight
+            ? "The light splits in two. Hatch one light layer on the orange area only. Keep it lighter than all of the shadow." + more
+            : "The shadow splits in two. Hatch one more layer on the orange area only. All the other areas stay as they are." + more
     }
 }
 
-/// The four steps that the artist sees, in the order of drawing. Each step has two views:
+/// The three steps that the artist sees, in the order of drawing. Each step has two views:
 /// the main one, and one with more detail.
 enum Step: Int, CaseIterable, Identifiable {
-    case shape, light, values, finish
+    case shape, light, finish
 
     var id: Int { rawValue }
 
@@ -125,7 +123,6 @@ enum Step: Int, CaseIterable, Identifiable {
         switch self {
         case .shape: "Shape"
         case .light: "Light & shadow"
-        case .values: "Values"
         case .finish: "Finish"
         }
     }
@@ -134,9 +131,8 @@ enum Step: Int, CaseIterable, Identifiable {
     var views: (String, String) {
         switch self {
         case .shape: ("Lines", "Planes")
-        case .light: ("Shadows", "Form")
-        case .values: ("Values", "Darks & lights")
-        case .finish: ("Edges", "Photo")
+        case .light: ("Values", "Form")
+        case .finish: ("Darks & lights", "Edges")
         }
     }
 
@@ -144,9 +140,8 @@ enum Step: Int, CaseIterable, Identifiable {
     func stage(detail: Bool) -> Stage {
         switch self {
         case .shape: detail ? .planes : .blockIn
-        case .light: detail ? .form : .shadows
-        case .values: detail ? .darks : .values
-        case .finish: detail ? .details : .edges
+        case .light: detail ? .form : .values
+        case .finish: detail ? .edges : .darks
         }
     }
 
@@ -159,15 +154,11 @@ enum Step: Int, CaseIterable, Identifiable {
         )
         case .light: (
             "Everything in the light is lighter than everything in the shadow. Keep the two families apart.",
-            "Beginners shade one feature at a time. Hatch the full shadow shape as one tone, across the features."
-        )
-        case .values: (
-            "Compare two areas, not one area alone. Use Compare values (the eyedropper) to see which is darker.",
-            "Beginners do not make the darks dark enough. Use your softest pencil for the darkest value."
+            "Beginners shade one feature at a time. Hatch each shape as one tone, across the features."
         )
         case .finish: (
             "Squint and flip the picture to find errors. Correct the big shapes before the small details.",
-            "Beginners draw a hard line around the face. An edge is where a light area meets a dark area."
+            "Beginners do not make the darks dark enough. Use your softest pencil for the darkest accents."
         )
         }
     }
@@ -179,17 +170,13 @@ enum Step: Int, CaseIterable, Identifiable {
         case (.shape, true):
             "See the head as a few flat planes. Each plane gets one value, and the values change where the planes turn."
         case (.light, false):
-            "Hatch one light tone over the head, but not on the brightest spots. Then put a darker tone over all the gray: that is the shadow. Tan areas are dark hair or clothes in the light, not shadow."
+            "Start with the light and the shadow. Then add one value at a time."
         case (.light, true):
-            "Inside the shadow, the core shadow next to the light is the darkest. Reflected light makes the rest of the shadow a little lighter. Cast shadows have sharp edges."
-        case (.values, false):
-            "Start with 2 values: light and dark. Then add one value at a time and see how each shape splits. Click an area or a gray to see all the areas with that value."
-        case (.values, true):
-            "Make the black areas your darkest darks. Lift the yellow spots with an eraser: they are the brightest lights."
+            "This is why the shadow is where it is. Inside the shadow, the core shadow next to the light is the darkest. Reflected light makes the rest of the shadow a little lighter. Cast shadows have sharp edges."
         case (.finish, false):
-            "Keep the edges on the dark lines sharp. Make all the other edges soft."
+            "Make the black areas your darkest darks. Lift the yellow spots with an eraser: they are the brightest lights. Then add the small details."
         case (.finish, true):
-            "Add the small details last. Squint to check that the big values are still right."
+            "Keep the edges on the dark lines sharp. Make all the other edges soft. Squint to check that the big values are still right."
         }
     }
 }
