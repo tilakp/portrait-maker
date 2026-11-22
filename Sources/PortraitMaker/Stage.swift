@@ -89,6 +89,31 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Names for the value steps in the words of light and shadow, and what each new value adds.
+enum ValueGuide {
+    /// One name for each value step, lightest first.
+    static func names(count: Int) -> [String] {
+        switch count {
+        case 2: ["Light", "Shadow"]
+        case 3: ["Light", "Halftone", "Shadow"]
+        case 4: ["Light", "Halftone", "Shadow", "Darkest"]
+        case 5: ["Brightest", "Light", "Halftone", "Shadow", "Darkest"]
+        default: (1...count).map { $0 == 1 ? "1 Lightest" : $0 == count ? "\($0) Darkest" : "\($0)" }
+        }
+    }
+
+    /// What is new when the map has `count` values.
+    static func news(count: Int) -> String {
+        switch count {
+        case 2: "2 values: the light and the shadow. Draw only these two shapes first."
+        case 3: "New: the halftone. It is the gray where the form turns away from the light."
+        case 4: "New: the darkest darks separate from the shadow, for example the eye sockets, the nostrils and the hair."
+        case 5: "New: the brightest lights separate from the light. They are the planes that face the light."
+        default: "New: smaller steps between the values. Add them only when the big shapes are correct."
+        }
+    }
+}
+
 /// The four steps that the artist sees, in the order of drawing. Each step has two views:
 /// the main one, and one with more detail.
 enum Step: Int, CaseIterable, Identifiable {
@@ -122,6 +147,28 @@ enum Step: Int, CaseIterable, Identifiable {
         case .light: detail ? .form : .shadows
         case .values: detail ? .darks : .values
         case .finish: detail ? .details : .edges
+        }
+    }
+
+    /// One technique tip, and one mistake that beginners often make, for the step.
+    var tip: (tip: String, mistake: String) {
+        switch self {
+        case .shape: (
+            "Hold the pencil far from the point and draw light lines. You will erase most of them.",
+            "Beginners put the eyes too high. The eyes are near the middle of the head, not in the top third."
+        )
+        case .light: (
+            "Everything in the light is lighter than everything in the shadow. Keep the two families apart.",
+            "Beginners shade one feature at a time. Hatch the full shadow shape as one tone, across the features."
+        )
+        case .values: (
+            "Compare two areas, not one area alone. Use Compare values (the eyedropper) to see which is darker.",
+            "Beginners do not make the darks dark enough. Use your softest pencil for the darkest value."
+        )
+        case .finish: (
+            "Squint and flip the picture to find errors. Correct the big shapes before the small details.",
+            "Beginners draw a hard line around the face. An edge is where a light area meets a dark area."
+        )
         }
     }
 

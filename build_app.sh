@@ -26,6 +26,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/release/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/SamplePortrait.jpg "$APP/Contents/Resources/"
 cp -R Models/DepthAnything.mlmodelc "$APP/Contents/Resources/"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 for resource in ${RESOURCES[@]+"${RESOURCES[@]}"}; do

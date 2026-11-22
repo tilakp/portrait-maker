@@ -71,6 +71,36 @@ final class AnalysisTests: XCTestCase {
         XCTAssertEqual(LessonBuilder.valueProgression(a).count, 8)
     }
 
+    func testValueNamesHaveOneNamePerStep() {
+        for count in 2...9 {
+            let names = ValueGuide.names(count: count)
+            XCTAssertEqual(names.count, count)
+            XCTAssertEqual(Set(names).count, count, "names are different")
+            XCTAssertFalse(ValueGuide.news(count: count).isEmpty)
+        }
+        XCTAssertEqual(ValueGuide.names(count: 2), ["Light", "Shadow"])
+    }
+
+    /// A drawing done only in light gray: the check must say that the darks are too light.
+    func testLightDrawingHasDarksTooLight() {
+        let w = 40, h = 40
+        let photo = (0..<(w * h)).map { 1 - Float($0 % w) / Float(w - 1) }
+        let a = Analysis(
+            gray: GrayImage(width: w, height: h, pixels: photo), mask: [Bool](repeating: true, count: w * h),
+            soft: photo, medium: photo, faceArea: Array(photo.indices), faceTones: photo.sorted(), eyes: nil
+        )
+        func drawing(darkest: Float) -> CGImage {
+            LessonBuilder.rgbaImage(w, h) { i in
+                let v = 1 - (1 - darkest) * Float(i % w) / Float(w - 1)
+                return (v, v, v)
+            }
+        }
+        let light = DrawingCheck.render(drawing(darkest: 0.7), .identity, a)
+        XCTAssertGreaterThan(light.dark, 0.5)
+        let full = DrawingCheck.render(drawing(darkest: 0.15), .identity, a)
+        XCTAssertLessThan(full.dark, 0.5)
+    }
+
     func testValueTonesGoFromLightToDark() {
         for count in 2...9 {
             let tones = LessonBuilder.valueTones(count: count)

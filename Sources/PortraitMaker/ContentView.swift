@@ -74,6 +74,11 @@ struct ContentView: View {
                 } actions: {
                     Button("Open Portrait…") { importTarget = .portrait }
                         .buttonStyle(.borderedProminent)
+                    // A plaster bust: one color and one clear light, the classic first subject.
+                    if let sample = Bundle.main.url(forResource: "SamplePortrait", withExtension: "jpg") {
+                        Button("Try a Sample") { openPortrait(sample) }
+                            .help("Practice on a plaster bust with one clear light. It is easier than a photo of a person.")
+                    }
                 }
             }
         }
@@ -192,7 +197,11 @@ struct ContentView: View {
             Text(step.instructions(detail: showDetail))
                 .font(.title3)
                 .fixedSize(horizontal: false, vertical: true)
-            if stage == .values { progressionStrip }
+            if stage == .values {
+                progressionStrip
+                Label(ValueGuide.news(count: valueCount), systemImage: "plus.circle")
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .top, spacing: 16) {
                 picture(
                     stage == .values && valueHighlight != nil ? [Layer(image: valueHighlight!)] : lesson.layers(for: stage),
@@ -206,7 +215,8 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if stage != .details {
                         picture([Layer(image: lesson.photo)], pixelWidth: lesson.gray.width, markers: probeMarkers, overlays: noteOverlays(lesson), onTap: probe)
-                            .frame(height: 300)
+                            // Smaller on the Shape step, to make space for the notes and the tip.
+                            .frame(height: step == .shape ? 240 : 300)
                     }
                     if step == .light || step == .values, let form = lesson.form {
                         Label(form.form.lightDescription, systemImage: "lightbulb")
@@ -214,6 +224,7 @@ struct ContentView: View {
                     }
                     if step == .shape { faceNotes(lesson) }
                     Spacer()
+                    tipBox
                 }
                 .frame(width: 260)
             }
@@ -247,6 +258,20 @@ struct ContentView: View {
             }
             .frame(minHeight: 32)
         }
+    }
+
+    /// A technique tip and a common beginner mistake for the step.
+    private var tipBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(step.tip.tip, systemImage: "lightbulb.max")
+            Label(step.tip.mistake, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
+        .font(.callout)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.1)))
     }
 
     /// The value map with 2, 3, … 9 values side by side. Click one to use that number of values.
@@ -359,6 +384,10 @@ struct ContentView: View {
                 )
             } else if let check {
                 Text(summary).font(.title3)
+                if check.darksTooLight {
+                    Label("Your darkest areas are only light gray. Make the darks darker with a soft pencil, so that the drawing has the full range of values.", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
                 HStack(alignment: .top, spacing: 16) {
                     drawingPicture(lesson, check)
                     VStack(alignment: .leading, spacing: 10) {

@@ -118,7 +118,7 @@ struct Lesson {
         case .form where form != nil:
             return FormClass.allCases.filter { $0 != .background }.map { ($0.color, $0.name) }
         case .values:
-            return tones.tones.enumerated().map { (($0.element, $0.element, $0.element), "\($0.offset + 1)") }
+            return zip(tones.tones, ValueGuide.names(count: tones.count)).map { (($0, $0, $0), $1) }
         case .darks:
             return [((0.08, 0.08, 0.08), "Darkest darks"), ((1, 0.82, 0.3), "Highlights")]
         default:

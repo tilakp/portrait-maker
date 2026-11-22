@@ -104,6 +104,12 @@ struct DrawingCheck {
     let tones: [Float]
     /// Millimeters on the paper for each pixel of the reference. Nil when the paper size is not known.
     let millimetersPerPixel: Double?
+    /// The darkest pencil in the head on white paper, before the drawing is compared in its own range.
+    /// 0 is black, 1 is the paper.
+    var darkestPencil: Float = 0
+
+    /// True when the darkest pencil is lighter than a middle gray: the drawing needs darker darks.
+    var darksTooLight: Bool { darkestPencil > 0.5 }
 
     /// Finds the eyes in the drawing with Vision. Returns nil when no face is found.
     static func autoAlign(_ paper: Paper, to analysis: Analysis) -> DrawingCheck? {
@@ -139,18 +145,19 @@ struct DrawingCheck {
         // Correct the alignment with the tones of the full head.
         let first = render(drawing, start, analysis)
         let transform = refine(start, tones: first.tones, analysis)
-        let (pixels, tones) = transform == start ? first : render(drawing, transform, analysis)
+        let (pixels, tones, darkestPencil) = transform == start ? first : render(drawing, transform, analysis)
         let aligned = LessonBuilder.rgbaImage(analysis.width, analysis.height) { i in (pixels[i], pixels[i], pixels[i]) }
         // The transform scales the drawing to the reference, so one reference pixel is 1 / scale drawing pixels.
         let scaleToReference = Double(sqrt(abs(transform.a * transform.d - transform.b * transform.c)))
         return DrawingCheck(
             original: drawing, aligned: aligned, pixels: pixels, tones: tones,
-            millimetersPerPixel: paper.millimetersPerPixel.map { $0 / scaleToReference }
+            millimetersPerPixel: paper.millimetersPerPixel.map { $0 / scaleToReference },
+            darkestPencil: darkestPencil
         )
     }
 
     /// Draws the photo of the drawing at the size of the reference and makes the paper white.
-    static func render(_ drawing: CGImage, _ transform: CGAffineTransform, _ analysis: Analysis) -> (pixels: [Float], tones: [Float]) {
+    static func render(_ drawing: CGImage, _ transform: CGAffineTransform, _ analysis: Analysis) -> (pixels: [Float], tones: [Float], dark: Float) {
         let w = analysis.width, h = analysis.height
         func draw(background: UInt8, _ draw: (CGContext, CGRect) -> Void) -> [Float] {
             var bytes = [UInt8](repeating: background, count: w * h)
@@ -185,7 +192,7 @@ struct DrawingCheck {
         let photoHead = analysis.medium.indices.filter { analysis.mask[$0] }.map { analysis.medium[$0] }.sorted()
         let darkest = photoHead.isEmpty ? 0.1 : photoHead[Int(Float(photoHead.count - 1) * 0.01)]
         let pixels = flat.map { min(max(darkest + ($0 - dark) / max(1 - dark, 0.05) * (1 - darkest), 0), 1) }
-        return (pixels, LessonBuilder.boxBlur(pixels, w, h, radius: max(1, w / 150)))
+        return (pixels, LessonBuilder.boxBlur(pixels, w, h, radius: max(1, w / 150)), dark)
     }
 
     /// Tries small changes of size, rotation and position around the eye midpoint, and keeps

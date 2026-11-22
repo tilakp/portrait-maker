@@ -64,7 +64,7 @@ The first time the app starts after an install, Core ML prepares the depth model
 
 ## Usage
 
-1. Open a portrait: click **Open**, or drop a photo on the window. A clear photo with strong light from one side gives the best results.
+1. Open a portrait: click **Open**, or drop a photo on the window. A clear photo with strong light from one side gives the best results. New to portrait drawing? Click **Try a Sample** to practice on a plaster bust with one clear light.
 2. Go through the steps with **Next** (Return) and **Back**, or click a step at the top. The switch at the top right of each step shows more detail.
 3. On **Check my drawing**, add a photo of all of your paper from straight above, in even light, on a darker table, and choose the paper size. If the app does not find the face in your drawing, click the center of the eye on the left, then the eye on the right.
 
